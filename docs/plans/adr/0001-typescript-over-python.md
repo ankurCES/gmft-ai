@@ -16,10 +16,12 @@ pick a language for the v0.1 implementation.
 
 ## Rationale
 
-1. **Ink + React 19** is the cleanest path to a modern, composable, themable TUI.
+1. **Ink v5 + React 18** is the cleanest path to a modern, composable, themable TUI.
    There is no credible Python equivalent (Textual is good; Ink's React model is
    *better* for this use case because chat is fundamentally a stateful stream
-   of rendered components).
+   of rendered components). We pin Ink v5 (not v6) because `ink-testing-library`
+   v4 — the testing harness we depend on — is fully compatible with Ink v5 +
+   React 18. Ink v6 + React 19 are still settling; revisit in v0.2.
 2. **Vercel AI SDK** (`ai` package) gives us multi-provider LLM streaming + tool
    calling out of the box, and is TS-native. We can hand-roll a tight ~80-line
    ReAct loop around it without a LangChain-style framework.

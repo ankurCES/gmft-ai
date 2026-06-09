@@ -1,20 +1,48 @@
+# GMFT-AI
+
+> **Good-Made-for-the-World AI** — terminal-first agentic runtime for authorized penetration testing.
+> Chat is the surface. Safety is the floor.
+
+# dependencies
 node_modules/
+.pnpm-store/
+
+# build output
 dist/
 build/
+*.tsbuildinfo
+
+# logs
 *.log
-.DS_Store
+npm-debug.log*
+pnpm-debug.log*
+
+# environment
 .env
 .env.local
+.env.*.local
 
-# Runtime
+# runtime
 .tmp/
 .cache/
-
-# TUI recordings are kept; large binary blobs aren't
-*.pdf.swp
 coverage/
+*.lcov
 
-# Editor
+# os
+.DS_Store
+Thumbs.db
+
+# editor
 .idea/
-.vscode/
+.vscode/*
 !.vscode/settings.json
+!.vscode/extensions.json
+*.swp
+*.swo
+
+# release artifacts (kept in GH releases, not repo)
+*.tar.gz
+*.tgz
+
+# tui recordings
+docs/screenshots/*.cast
