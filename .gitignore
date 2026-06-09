@@ -1,0 +1,20 @@
+node_modules/
+dist/
+build/
+*.log
+.DS_Store
+.env
+.env.local
+
+# Runtime
+.tmp/
+.cache/
+
+# TUI recordings are kept; large binary blobs aren't
+*.pdf.swp
+coverage/
+
+# Editor
+.idea/
+.vscode/
+!.vscode/settings.json
