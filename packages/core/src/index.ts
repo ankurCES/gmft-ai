@@ -1,15 +1,16 @@
 /**
  * @gmft/core — agent runtime, chokepoint, tools, memory, session.
  *
- * Phase 1.5f ships live model + provider switching:
- * lookupApiKey / bindGetApiKey (SecretStore-backed key resolution),
- * getDefaultModel (provider -> model catalog), and the new
- * AgentApp wiring that rebuilds the LanguageModel on /model and
- * /provider. The LLM streaming surface from 1.5d is unchanged.
- * Tools + chokepoint land in phase 3.
+ * Phase 3 ships the chokepoint (the safety spine) and the tool
+ * registry/executor (the dispatch path). Every tool call now flows
+ * through `chokepoint.decide(...)` before the runner is invoked.
+ * The agent loop's `AgentEvent` union is extended (additively) with
+ * `tool-call-request` / `tool-result` / `confirmation-needed` for
+ * observability and the TUI's `<ApprovalPrompt>` flow. The LLM
+ * streaming surface and the provider/config surface are unchanged.
  */
 
-export const VERSION = '0.1.0-phase1.5f';
+export const VERSION = '0.1.0-phase3';
 
 export function version(): string {
   return VERSION;
@@ -77,3 +78,27 @@ export { getDefaultModel } from './llm/model-catalog.js';
 export { runTurn, type AgentEvent, type RunTurnOpts } from './agent/loop.js';
 export { tokenEstimate, totalTokens, type ChatMessage, type ChatRole } from './agent/context.js';
 export { summarizeIfNeeded, type SummarizeOpts, type SummarizeResult } from './agent/summarizer.js';
+
+export {
+  createChokepoint,
+  readChokepointEnv,
+  type Decision,
+  type Chokepoint,
+  type ChokepointCall,
+  type ChokepointEnv,
+} from './chokepoint/index.js';
+
+export {
+  ToolRegistry,
+  TOOL_CATEGORIES,
+  type Tool,
+  type ToolCategory,
+  type ToolContext,
+} from './tools/index.js';
+
+export {
+  execute,
+  type ExecuteCall,
+  type ExecuteResult,
+  type ExecuteOpts,
+} from './tools/executor.js';
