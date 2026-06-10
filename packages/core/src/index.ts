@@ -32,3 +32,12 @@ export {
   type UiConfig,
   type SecretsMeta,
 } from './config/config.js';
+
+export {
+  createSecretStore,
+  envPath,
+  secretsEnvDir,
+  type SecretStore,
+  type SecretBackend,
+  type CreateOpts,
+} from './config/secrets.js';
