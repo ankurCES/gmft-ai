@@ -21,6 +21,8 @@
   "dependencies": {
     "@gmft/core": "workspace:*",
     "@gmft/testkit": "workspace:*",
+    "@gmft/tools": "workspace:*",
+    "zod": "^3.25.76",
     "chalk": "^5.3.0",
     "ink": "^5.0.1",
     "ink-gradient": "^3.0.0",

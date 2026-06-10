@@ -27,18 +27,45 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   buildSystemPrompt,
+  createChokepoint,
   createModel,
   getDefaultModel,
+  readChokepointEnv,
+  loadConfig,
   runTurn,
   type ChatMessage,
   type CreateModelOpts,
   type LlmConfig,
   type PromptEnv,
 } from '@gmft/core';
+import {
+  shellExecTool,
+  nmapTool,
+  dnsenumTool,
+  theHarvesterTool,
+  whatwebTool,
+} from '@gmft/tools';
 import { App, type AppProps } from './App.js';
 import type { Message as Msg } from './ui/components/Message.js';
 import { SessionStore } from './session/store.js';
 import { dispatchSlash } from './session/commands.js';
+
+/**
+ * v0.1 phase 4 — the default tool catalog. The agent loop in
+ * `runTurn` consults this list when deciding what to expose to the
+ * LLM. Today the hook layer doesn't drive tool execution; the LLM
+ * turn is the one that pulls these in. AgentApp threads them
+ * through `runTurn` so the loop is ready when the LLM asks for a
+ * tool — the chokepoint is built lazily on first submit (we don't
+ * want a config disk read on every render).
+ */
+const DEFAULT_TOOLS = [
+  shellExecTool,
+  nmapTool,
+  dnsenumTool,
+  theHarvesterTool,
+  whatwebTool,
+] as const;
 
 /**
  * Async API-key resolver. Returns `undefined` when the key is unset
@@ -216,6 +243,14 @@ export function AgentApp({
   const [pendingApprovals, setPendingApprovals] = useState<PendingApproval[]>([]);
   const approvalResolversRef = useRef<Map<string, (approved: boolean) => void>>(new Map());
 
+  // v0.1 phase 4 — the chokepoint gate. Built lazily on the first
+  // submit (not at render time) because `loadConfig` does a sync
+  // disk read. We cache it in a ref so subsequent submits don't
+  // re-read. The ref is also the seam tests use to disable the
+  // chokepoint — see the agent-app test which never reaches this
+  // path (its runTurn is mocked).
+  const chokepointRef = useRef<ReturnType<typeof createChokepoint> | null>(null);
+
   const onConfirmation = useCallback(
     async (call: { id: string; name: string; args: Record<string, unknown>; reason: string }): Promise<boolean> => {
       return new Promise<boolean>((resolve) => {
@@ -281,12 +316,20 @@ export function AgentApp({
       const userMsg: ChatMessage = { role: 'user', content: value };
       const startedAt = Date.now();
       let buffer = '';
+      // v0.1 phase 4 — lazily build the chokepoint on first submit
+      // (not at render time, since `loadConfig` is a sync disk read).
+      // The cached ref means subsequent submits reuse the gate.
+      if (chokepointRef.current === null) {
+        chokepointRef.current = createChokepoint(readChokepointEnv({ cfg: loadConfig() }));
+      }
       try {
         for await (const ev of runTurn({
           model: llmModel,
           system,
           history: [userMsg],
           onConfirmation,
+          tools: DEFAULT_TOOLS,
+          chokepoint: chokepointRef.current,
         })) {
           if (ev.type === 'text-delta') {
             buffer += ev.text;
