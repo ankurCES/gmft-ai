@@ -10,7 +10,7 @@
  * streaming surface and the provider/config surface are unchanged.
  */
 
-export const VERSION = '0.1.0-phase3';
+export const VERSION = '0.1.0-phase4';
 
 export function version(): string {
   return VERSION;
@@ -87,6 +87,9 @@ export {
   type ChokepointCall,
   type ChokepointEnv,
 } from './chokepoint/index.js';
+
+export { FindingSchema, SeveritySchema, type Finding, type Severity } from './findings/index.js';
+export { FindingsStore, type FindingsStoreOpts } from './findings/store.js';
 
 export {
   ToolRegistry,
