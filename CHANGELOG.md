@@ -4,6 +4,46 @@ All notable changes to GMFT-AI are documented here.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning: [Semantic](https://semver.org/).
 
+## [0.1.0-phase1.5b] — 2026-06-09
+
+Provider modules, onboard driver, session log. Builds on 1.5a's
+`ConfigField` registry. UI binding is 1.5c; this plan ships only
+data, types, and a headless driver.
+
+### Added
+- `ProviderModule` interface (replaces the 1.5a stub) with real
+  `AuthField`, `ModelInfo`, `ValidationResult` types
+- 5 provider modules: `anthropic`, `openai`, `google`, `openrouter`,
+  `ollama`. Each does a real 1-token HTTP probe via `validate()` —
+  no stubs, no fake responses. Probes use `undici.fetch` (respects
+  `setGlobalDispatcher` for test mocking) and have a 5s timeout
+  (3s for Ollama)
+- `PROVIDERS` tuple (frozen, stable order) + `getProvider(id)`
+- `createLlmProviderField(ui)` factory — takes a `ProviderUI`
+  adapter, returns a `ConfigField`. UI binding is 1.5c; this is
+  the seam
+- `runOnboarding({ fields, runtimeFactory, save, force? })` driver
+  in `@gmft/core` — walks the registered fields, merges returned
+  partial configs, calls `save` once. Returns `null` on user abort
+- `session/log.ts` — `appendTurn` / `readLog` / `redactSecrets` in
+  `@gmft/core`. JSONL format, one line per turn, partial-write
+  crash loses at most one turn. `redactSecrets` is conservative
+  string-level redaction (Authorization headers, apiKey=, provider
+  key prefixes)
+- Dev dependency on `undici@^6` for `MockAgent` in tests
+
+### Fixed
+- `secrets.compositeKey` now preserves inner-key case (was uppercase
+  before) — no more `apiKey` / `apikey` collision. Backward-incompatible
+  for anyone who has secrets stored under the uppercase form, but
+  1.5a shipped 1.5 days ago and no real users exist yet. Env-file
+  line parser regex updated to accept mixed-case keys.
+
+### Tests
++20 new `it()` cases across 4 new test files (providers, onboard,
+session-log) + 1 new case in secrets. Phase 1.5b running total:
+39 → 59.
+
 ## [0.1.0-phase1.5a] — 2026-06-09
 
 ConfigLayer. The data layer Phase 1.5b (providers + onboard driver) and
