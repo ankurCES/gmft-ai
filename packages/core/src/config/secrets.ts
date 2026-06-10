@@ -100,6 +100,11 @@ export interface CreateOpts {
  * (native binding missing — typical on a CI box without libsecret), falls
  * back to `EnvFileStore` silently. Callers should record `store.backend`
  * in `config.toml` under `secrets.backend` so re-runs don't switch.
+ *
+ * TODO: when honoring `secrets.backend` from config, pass an explicit
+ * preference through CreateOpts and re-throw on probe failure when the
+ * user explicitly chose 'keytar'. Silent fallback hides locked-keychain
+ * errors from users who opted in. (See 1.5a code review.)
  */
 export async function createSecretStore(opts: CreateOpts): Promise<SecretStore> {
   const probe = new KeytarStore(opts.service);

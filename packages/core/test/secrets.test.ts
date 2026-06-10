@@ -30,6 +30,9 @@ describe('createSecretStore', () => {
 
   it('round-trips secrets via EnvFileStore and locks file mode to 0600', async () => {
     vi.resetModules();
+    vi.doMock('keytar', () => {
+      throw new Error('libsecret not found');
+    });
     const { createSecretStore, envPath } = await import('../src/config/secrets.js');
     const store = await createSecretStore({ service: 'gmft-test-mode' });
     expect(store.backend).toBe('envfile');
