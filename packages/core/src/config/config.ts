@@ -47,6 +47,13 @@ export function defaultConfig(): GmftConfig {
   };
 }
 
+/**
+ * Returns the base directory for the gmft config tree. Honors
+ * `XDG_CONFIG_HOME` if set and non-empty; otherwise falls back to
+ * `$HOME/.config` per the XDG Base Directory Specification. (Empty
+ * string in `XDG_CONFIG_HOME` is treated as unset, matching the
+ * `??` semantics most CLI tools use.)
+ */
 export function configDir(): string {
   return process.env.XDG_CONFIG_HOME ?? join(homedir(), '.config');
 }
@@ -66,5 +73,5 @@ export function loadConfig(): GmftConfig {
 export function saveConfig(cfg: GmftConfig): void {
   const p = configPath();
   mkdirSync(join(configDir(), 'gmft'), { recursive: true });
-  writeFileSync(p, stringify(cfg as Record<string, unknown>));
+  writeFileSync(p, stringify(cfg));
 }
