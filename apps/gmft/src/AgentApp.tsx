@@ -8,6 +8,17 @@
  * expects a `Message | null` back. That keeps the TUI layer testable
  * with a stub `onSubmit` (see `app-e2e.test.tsx`) and the LLM layer
  * testable with a stub App (see `useAgent.test.tsx`).
+ *
+ * Slash commands (1.5e) are handled by the App's `handleSubmit` (the
+ * stub `/help` and `/clear` branches were already there in 1.5d). The
+ * full slash dispatcher lands in `apps/gmft/src/session/commands.ts`
+ * and is wired in by `cli.tsx` via the App's `onSubmit` prop — AgentApp
+ * is only invoked for non-slash inputs.
+ *
+ * Persistence: AgentApp accepts an `onTurnComplete` callback. After
+ * every LLM turn, the final user+assistant pair is forwarded so the
+ * SessionStore can append to the JSONL log. The CLI installs that
+ * callback; tests don't need it.
  */
 
 import { useCallback, useMemo } from 'react';
@@ -27,9 +38,27 @@ export interface AgentAppProps extends Omit<AppProps, 'onSubmit'> {
   model: CreateModelOpts;
   /** Environment metadata for the system prompt. */
   env: PromptEnv;
+  /**
+   * Optional initial history to hydrate from a resumed session.
+   * Pass the `Turn[]` from `SessionStore.load(id)` (converted to
+   * `Message[]` by the caller) here. When set, the App shows those
+   * messages on first paint.
+   */
+  initialMessages?: Msg[];
+  /**
+   * Called once per completed LLM turn with the final user + assistant
+   * pair. Used by the session store to append to the JSONL log. NOT
+   * called for slash commands (those don't go through the LLM).
+   */
+  onTurnComplete?: (turns: { user: ChatMessage; assistant: ChatMessage }) => void;
 }
 
-export function AgentApp({ model, env, ...appProps }: AgentAppProps): React.JSX.Element {
+export function AgentApp({
+  model,
+  env,
+  onTurnComplete,
+  ...appProps
+}: AgentAppProps): React.JSX.Element {
   const system = useMemo(() => buildSystemPrompt('agent', env), [env]);
   const llmModel = useMemo(() => createModel(model), [model]);
 
@@ -55,10 +84,17 @@ export function AgentApp({ model, env, ...appProps }: AgentAppProps): React.JSX.
             };
           }
         }
+        const finalText = buffer || '(empty response)';
+        const assistantMsg: ChatMessage = {
+          role: 'assistant',
+          content: finalText,
+          ts: startedAt,
+        };
+        onTurnComplete?.({ user: userMsg, assistant: assistantMsg });
         return {
           id: `a-${startedAt}`,
           role: 'assistant',
-          content: buffer || '(empty response)',
+          content: finalText,
           ts: startedAt,
         };
       } catch (err) {
@@ -70,7 +106,7 @@ export function AgentApp({ model, env, ...appProps }: AgentAppProps): React.JSX.
         };
       }
     },
-    [llmModel, system],
+    [llmModel, system, onTurnComplete],
   );
 
   return <App {...appProps} onSubmit={handleSubmit} />;
