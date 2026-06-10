@@ -9,6 +9,8 @@ import { gobusterTool } from './web/gobuster';
 import { ffufTool } from './web/ffuf';
 import { sqlmapTool } from './web/sqlmap';
 import { evilTwinTool } from './wifi/evil-twin';
+import { wifiDeauthTool } from './wifi/deauth';
+import { wifiteScanTool } from './wifi/wifite-scan';
 import type { z } from 'zod';
 
 /**
@@ -72,6 +74,16 @@ export const tools: Array<{ name: string; category: string; flags: readonly stri
     category: evilTwinTool.category,
     flags: evilTwinTool.flags,
   },
+  {
+    name: wifiDeauthTool.name,
+    category: wifiDeauthTool.category,
+    flags: wifiDeauthTool.flags,
+  },
+  {
+    name: wifiteScanTool.name,
+    category: wifiteScanTool.category,
+    flags: wifiteScanTool.flags,
+  },
 ];
 
 export { shellExecTool };
@@ -86,5 +98,7 @@ export {
   ffufTool,
   sqlmapTool,
 } from './web/index.js';
-export { evilTwinTool } from './wifi/index.js';
+export { evilTwinTool } from './wifi/index';
+export { wifiDeauthTool } from './wifi/deauth';
+export { wifiteScanTool } from './wifi/wifite-scan';
 export type { z };

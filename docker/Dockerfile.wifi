@@ -1,0 +1,57 @@
+# Wifi attack toolkit — aircrack-ng + wifite. Alpine 3.20 (musl, small).
+# Phase 6 — see docs/superpowers/specs/2026-06-17-gmft-phase6-design.md §3.
+#
+# Tools provided:
+#   - aircrack-ng suite (airmon-ng, airodump-ng, aireplay-ng)
+#   - wifite (automated wifi auditor; we use it in scan-only mode)
+#
+# Why alpine: small base image, fast build, no DB drivers (wifi tools
+# are network-only). Mirrors the alpine:3.20 pin used by Dockerfile.network
+# and Dockerfile.web for reproducibility.
+FROM alpine:3.20
+
+# Install wifi attack toolkit. wifite is a Python wrapper around
+# aircrack-ng and needs bash + aircrack-ng + git + iw + wireless tools.
+# aircrack-ng pulls in libpcap + openssl transitively.
+RUN apk add --no-cache \
+      aircrack-ng \
+      bash \
+      git \
+      iw \
+      python3 \
+      py3-pip \
+      wireless-tools \
+    && rm -rf /var/cache/apk/*
+
+# wifite2 is a Python project distributed via GitHub (no PyPI / apk
+# package; no third-party Python deps — just stdlib + aircrack-ng
+# shell-outs). Clone pinned release, pip-install it (installs the
+# `wifite` Python package), then overwrite the broken upstream shim
+# with one that calls `wifite.__main__.entry_point()` (upstream's
+# `setup.py` declares a `wifite.wifite:entry_point` console script
+# that doesn't actually exist in the source — the real entry point
+# is `wifite.__main__.entry_point`). Mirrors the nikto clone pattern
+# in Dockerfile.web.
+ARG WIFITE_VERSION=2.2.5
+ARG WIFITE_REPO=https://github.com/derv82/wifite2.git
+RUN git clone --depth 1 --branch "${WIFITE_VERSION}" "${WIFITE_REPO}" /opt/wifite \
+    && pip install --no-cache-dir --break-system-packages /opt/wifite \
+    && rm -rf /opt/wifite \
+    && printf '#!/bin/sh\nexec python3 -c "from wifite import __main__; __main__.entry_point()" "$@"\n' \
+            > /usr/local/bin/wifite \
+    && chmod +x /usr/local/bin/wifite
+
+# Validate at build time: every binary we expect the wifi tools to
+# shell out to must be on PATH. Catches upstream apk/pip removal in CI
+# before the .deb ships with a broken wifi image. wifite doesn't
+# expose --version (uses argparse without a version action) so we
+# use --help, which exits 0 and confirms the import path works.
+RUN which aircrack-ng airmon-ng airodump-ng aireplay-ng wifite \
+    && aircrack-ng --help > /dev/null \
+    && wifite --help > /dev/null
+
+# No default ENTRYPOINT/CMD — every tool sets its own argv via the
+# runner. The runner uses `docker run -i --rm <image> <argv>`, so the
+# image's ENTRYPOINT (if any) is prepended to the argv. Keeping
+# ENTRYPOINT unset means the tool's argv runs verbatim inside alpine's
+# /bin/sh (via the runner's `-i` flag).
