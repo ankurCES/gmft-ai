@@ -259,6 +259,50 @@ updated the rail; it didn't touch the model).
   default-model behavior)
 - Workspace total: **152 tests** (73 core + 78 apps/gmft + 1 testkit)
 
+## [0.1.0-phase1.5g] — 2026-06-14
+
+Write-time secret redaction. A user pasting an API key, a bearer
+token, or a `{"apiKey": "..."}` config snippet into chat must never
+land on disk in the JSONL session log. v0.1 plan §10 line 572 calls
+this out: "scrubs `(api[_-]?key|token|secret)\s*=\s*\S+` patterns.
+Apply at write time."
+
+### Added
+- `redactSecrets(line)` extended to cover JSON-shaped secrets
+  (`"apiKey": "..."`, `"api_key": "..."`, `"token": "..."`,
+  `"secret": "..."`) and a bare `sk-` provider prefix (OpenAI
+  keys, gated on 20+ chars to avoid English-word false positives).
+  The header, env, `sk-ant-`, `sk-or-`, and `AIza` patterns from
+  1.5d are unchanged.
+- `appendTurn(path, turn)` now runs `redactSecrets` on the
+  serialized line before `appendFile`. A user pasting
+  `sk-ant-1234567890abcdef` into chat is rewritten to
+  `[REDACTED]` on disk; `readLog` returns the redacted form too.
+  This is intentional — the alternative is keeping secrets on disk.
+- `appendTurnRaw(path, turn)` — sibling that bypasses redaction.
+  Escape hatch for tests and trusted internal paths. Not used by
+  the production write path; not re-exported from
+  `@gmft/core/index.ts`.
+
+### Tests
+- 4 new `appendTurn` regression tests: env-style
+  (`apiKey=sk-...`), JSON-style (`"apiKey": "sk-..."`),
+  header-style (`Authorization: Bearer sk-...`), and
+  round-trip-safety (benign text passes through unchanged).
+- 1 new `appendTurnRaw` boundary test (the secret IS on disk
+  when redaction is bypassed — proves the safety net lives in
+  `appendTurn`, not in the writer).
+- Workspace total: **157 tests** (78 core + 78 apps/gmft + 1 testkit)
+
+### Migration
+- Pre-1.5g session logs that contain raw user-pasted secrets are
+  NOT scrubbed retroactively. Delete the affected `.jsonl` file
+  under `~/.local/share/gmft/sessions/` (or whatever
+  `SessionStore` reports as the sessions dir) if you want a clean
+  start. v0.1 has no built-in session migration — it would have
+  to parse every line and decide what's a secret, which is exactly
+  the redaction problem we just solved for new writes.
+
 ## [0.1.0-phase1.5e] — 2026-06-10
 
 Slash commands + JSONL session persistence. App is now a controlled
