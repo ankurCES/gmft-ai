@@ -4,6 +4,111 @@ All notable changes to GMFT-AI are documented here.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning: [Semantic](https://semver.org/).
 
+## [0.1.0-phase3.5] — 2026-06-15
+
+TUI chokepoint prompt + design doc delta. Builds on phase 3 by
+wiring the new `pendingApprovals` stream into the TUI so the user
+sees a prompt when the chokepoint emits a `confirmation` event.
+No new tools, no new policies — purely the user-facing surface
+for the spine that phase 3 shipped.
+
+### Added
+- `ApprovalPrompt` component in
+  `apps/gmft/src/ui/components/ApprovalPrompt.tsx` — yellow-bordered
+  Ink box that listens for `y` / `n` / `Esc`, renders tool name +
+  summarised args + reason + a `(y/n)` hint. 5 tests cover
+  visible state, approve (`y` and `Y`), deny (`n`), and Esc-deny
+- `App` gains `pendingApprovals: PendingApproval[]` and
+  `onApprovalResolve?: (id, approved) => void` props; when the
+  array is non-empty, a row of prompts renders above the active
+  tab so the user always sees a pending confirmation regardless
+  of which tab they're on. When empty, the layout is identical
+  to phase 3
+- `AgentApp` constructs the `pendingApprovals` ref map, registers
+  an `onConfirmation` callback against `runTurn` that creates an
+  entry and resolves the runTurn promise, and threads the two
+  new props through to `App`
+- ADRs:
+  - `0006-chokepoint-first-tool-dispatch.md` — why every tool
+    call is funnelled through `@gmft/core`'s chokepoint
+  - `0007-tools-as-a-separate-package.md` — why the catalog
+    lives in `@gmft/tools`, not `@gmft/core`
+  - `0008-sandbox-via-docker-with-host-fallback.md` —
+    implementation of ADR-0003's policy as a `runInSandbox`
+    helper with a `mode: 'docker' | 'host'` field on every
+    result for auditability
+
+### Test totals
+- Phase 3.5 delta: +5 tests (`approval-prompt.test.tsx`)
+- Workspace: 228 tests passing (core 119, tools 26, apps/gmft 83)
+
+## [0.1.0-phase3] — 2026-06-15
+
+The chokepoint + tools safety spine. This is the first release
+where the agent can use tools at all. v0.1's `runTurn` was a
+single `streamText` call with `maxSteps: 1`; phase 3 replaces
+that with a hand-rolled dispatch loop that funnels every tool
+call through a single audit point, gates each call against a
+typed policy, and either allows, denies, confirms (with the
+user), or mutates the call before execution. Tools live in a
+new `@gmft/tools` package with a Docker-first runner and a
+loud, explicit host fallback.
+
+### Added
+- `@gmft/core` — chokepoint:
+  - `Chokepoint.evaluate(call, ctx)` → `Confirm | Allow | Deny |
+    Mutate` decision
+  - `Policy` — typed per-action rules (allow / deny / confirm)
+  - `Decision` — user's yes / no / mutated response to a
+    `Confirm`
+  - 4 source files (`decision.ts`, `policy.ts`, `rules.ts`,
+    `index.ts`), 23 tests
+- `@gmft/core` — tools:
+  - `Tool<I, O>` — Zod-typed tool interface (input + output)
+  - `ToolRegistry` — register / list / lookup
+  - `executeTools()` — runs approved calls and emits
+    `tool-result` events
+- `@gmft/core` — agent loop:
+  - `runTurn` is now a hand-rolled dispatch loop
+    (`packages/core/src/agent/loop.ts`) that calls
+    `streamText` for one step at a time, inspects the
+    `tool-call` chunks, routes each through the chokepoint,
+    and feeds `tool-result`s back into the next step
+  - New event types: `tool-call`, `tool-result`, `confirmation`,
+    `approve`, `deny` (alongside the existing `text-delta`,
+    `done`, `error`)
+  - `wrapToolsForSDK` exports a typed helper for SDK consumers
+- `@gmft/tools` — new package, version `0.1.0-phase3`:
+  - `catalog()` — 5 default tools (`whois`, `dig`, `tshark_read`,
+    `http_get`, `shell_exec`)
+  - `runInSandbox({ tool, argv, cwd?, env?, timeoutMs? })` —
+    Docker-first runner; falls back to host only when
+    `GMFT_SANDBOX=host` is set or Docker is unavailable and the
+    tool's `allowHostFallback: true` is set
+  - `SandboxResult.mode: 'docker' | 'host'` — part of the audit
+    event for traceability
+  - `prereq.ts` — detects `docker`, `tshark`, `scapy` on the
+    host (skipped in test env via `GMFT_SKIP_PREREQ=1`)
+  - 26 tests across `prereq.test.ts`, `runner.test.ts`,
+    `shell-exec.test.ts`
+- `apps/gmft` — status rail shows the active sandbox mode and
+  surfaces a persistent ⚠ banner when host fallback is in use
+- Plan doc: `docs/superpowers/plans/2026-06-15-gmft-phase3-chokepoint-tools.md`
+
+### Changed
+- `runTurn`'s public surface is now an `AsyncIterable<AgentEvent>`
+  over the new event union; `text-delta` and `done` are unchanged
+  so the TUI's existing render path keeps working
+- `package.json` versions: `@gmft/core` → `0.1.0-phase3`;
+  `@gmft/tools` → `0.1.0-phase3`
+- `pnpm-workspace.yaml` unchanged (workspace was already
+  glob-`packages/*`)
+
+### Test totals
+- Phase 3 delta: +73 tests (core +73, tools +26, apps unchanged)
+- Workspace: 223 tests passing at phase 3 (core 119, testkit 1,
+  tools 26, apps/gmft 78)
+
 ## [0.1.0-phase1.5d] — 2026-06-13
 
 LLM streaming into the TUI. No tools, no slash commands, no session
