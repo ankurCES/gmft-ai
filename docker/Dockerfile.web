@@ -1,0 +1,71 @@
+# Web vulnerability tools image: nuclei, nikto, gobuster, ffuf, sqlmap.
+# Pinned to alpine:3.20 for reproducibility.
+FROM alpine:3.20
+
+# System packages: bash for shell tools, ca-certificates for HTTPS,
+# git to clone nikto (no static binary), python3 + py3-pip for sqlmap.
+RUN apk add --no-cache \
+      bash \
+      ca-certificates \
+      git \
+      python3 \
+      py3-pip
+
+# sqlmap (Python) — installed via pip with PEP 668 override.
+RUN pip install --no-cache-dir --break-system-packages sqlmap
+
+# nuclei — pinned version
+ARG NUCLEI_VERSION=3.1.0
+RUN ARCH=$(uname -m) && \
+    if [ "$ARCH" = "x86_64" ]; then NUCLEI_ARCH="linux_amd64"; \
+    elif [ "$ARCH" = "aarch64" ]; then NUCLEI_ARCH="linux_arm64"; \
+    else echo "Unsupported arch: $ARCH" && exit 1; fi && \
+    curl -fsSL "https://github.com/projectdiscovery/nuclei/releases/download/v${NUCLEI_VERSION}/nuclei_${NUCLEI_VERSION}_${NUCLEI_ARCH}.zip" \
+      -o /tmp/nuclei.zip && \
+    unzip /tmp/nuclei.zip -d /usr/local/bin/ && \
+    rm /tmp/nuclei.zip && \
+    chmod +x /usr/local/bin/nuclei
+
+# nikto — clone the repo (no static binary distribution)
+ARG NIKTO_VERSION=2.5.0
+RUN git clone --depth 1 --branch "v${NIKTO_VERSION}" https://github.com/sullo/nikto.git /opt/nikto && \
+    ln -s /opt/nikto/program/nikto.pl /usr/local/bin/nikto && \
+    chmod +x /usr/local/bin/nikto
+
+# gobuster — pinned version
+ARG GOBUSTER_VERSION=3.6
+RUN ARCH=$(uname -m) && \
+    if [ "$ARCH" = "x86_64" ]; then GOBUSTER_ARCH="linux_amd64"; \
+    elif [ "$ARCH" = "aarch64" ]; then GOBUSTER_ARCH="linux_arm64"; \
+    else echo "Unsupported arch: $ARCH" && exit 1; fi && \
+    curl -fsSL "https://github.com/OJ/gobuster/releases/download/v${GOBUSTER_VERSION}/gobuster_Linux_${GOBUSTER_ARCH}.tar.gz" \
+      -o /tmp/gobuster.tar.gz && \
+    tar -xzf /tmp/gobuster.tar.gz -C /usr/local/bin/ gobuster && \
+    rm /tmp/gobuster.tar.gz && \
+    chmod +x /usr/local/bin/gobuster
+
+# ffuf — pinned version
+ARG FFUF_VERSION=2.1.0
+RUN ARCH=$(uname -m) && \
+    if [ "$ARCH" = "x86_64" ]; then FFUF_ARCH="amd64"; \
+    elif [ "$ARCH" = "aarch64" ]; then FFUF_ARCH="arm64"; \
+    else echo "Unsupported arch: $ARCH" && exit 1; fi && \
+    curl -fsSL "https://github.com/ffuf/ffuf/releases/download/v${FFUF_VERSION}/ffuf_${FFUF_VERSION}_linux_${FFUF_ARCH}.tar.gz" \
+      -o /tmp/ffuf.tar.gz && \
+    tar -xzf /tmp/ffuf.tar.gz -C /usr/local/bin/ ffuf && \
+    rm /tmp/ffuf.tar.gz && \
+    chmod +x /usr/local/bin/ffuf
+
+# Common wordlist (small; the user can mount their own).
+RUN mkdir -p /usr/share/wordlists/dirb && \
+    curl -fsSL https://raw.githubusercontent.com/v0re/dirb/master/wordlists/common.txt \
+      -o /usr/share/wordlists/dirb/common.txt
+
+# Sanity check at build time — fails the build if any tool is missing.
+RUN nuclei -version \
+    && nikto -Version 2>&1 | head -1 \
+    && gobuster version \
+    && ffuf -V \
+    && sqlmap --version
+
+WORKDIR /work
