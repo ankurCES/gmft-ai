@@ -4,6 +4,58 @@ All notable changes to GMFT-AI are documented here.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning: [Semantic](https://semver.org/).
 
+## [0.1.0-phase1.5d] — 2026-06-13
+
+LLM streaming into the TUI. No tools, no slash commands, no session
+persistence (those are 1.5e). Builds on 1.5c's TUI; the TUI itself
+is unchanged. v0.1 has no chokepoint — `runTurn` is a single
+`streamText` call with `maxSteps: 1`.
+
+### Added
+- `createModel({provider, model, apiKey, endpoint?})` in
+  `@gmft/core` → returns a Vercel AI SDK `LanguageModelV1` handle
+  for the 5 supported providers. OpenRouter/Ollama route through
+  `@ai-sdk/openai` with `compatibility: 'compatible'` (sidesteps
+  the V1/V2 version skew between `@ai-sdk/openai-compatible@1.0`
+  and `ai@4.3.19`)
+- `buildSystemPrompt('agent' | 'summarizer', env)` — pinned safety
+  text + environment metadata. The agent prompt embeds the
+  "authorized testing only" + "STOP and ask" rules verbatim
+- `runTurn({model, system, history, signal?})` →
+  `AsyncIterable<AgentEvent>` where `AgentEvent` is
+  `text-delta | done | error`. Wraps `streamText`; ignores all
+  chunk types except `text-delta` and `error`. Pre-aborted signal
+  is honored at the next event boundary
+- `ChatMessage` + `tokenEstimate(text)` + `totalTokens(messages)` —
+  v0.1 uses chars/4 with +4 overhead per message. Phase 2 swaps for
+  tiktoken
+- `summarizeIfNeeded({history, budget, generateSummary?})` — drops
+  oldest messages until under budget. Optional `generateSummary`
+  callback prepends a synthetic system message summarizing the
+  dropped chunk (LLM call lands in phase 2)
+- `useAgent({system, runTurn, initialHistory?, onError?})` hook in
+  `apps/gmft` — owns conversation state, exposes `submit` /
+  `abort` / `history` / `streaming` / `error`. The seam for slash
+  commands (1.5e) and the tool-calling loop (phase 3)
+- `AgentApp` — thin wrapper around `App` that supplies the real
+  `onSubmit`. The TUI itself is unaware of the LLM, which keeps
+  `app-e2e.test.tsx` working with a stub `onSubmit`
+
+### Changed
+- `cli.tsx` now renders `AgentApp` and looks up the API key from
+  the `SecretStore` after onboarding. Tolerates keytar probe
+  failures and missing `os.hostname()` / `os.userInfo().username`
+  (sandbox envs)
+- Bumped `@gmft/core` `VERSION` to `0.1.0-phase1.5d`
+
+### Test count
+- 22 new tests (7 in `model-factory.test.ts` + `prompts.test.ts`,
+  13 in `agent-loop.test.ts` + `context.test.ts` +
+  `summarizer.test.ts`, 2 in `useAgent.test.tsx`)
+- Workspace total: 1 + 57 + 39 = **97** (was 75)
+- All green; `pnpm -r test` runs in <2s; `pnpm -r build` clean;
+  `pnpm -r typecheck` clean
+
 ## [0.1.0-phase1.5b] — 2026-06-09
 
 Provider modules, onboard driver, session log. Builds on 1.5a's
