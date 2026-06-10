@@ -4,6 +4,47 @@ All notable changes to GMFT-AI are documented here.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning: [Semantic](https://semver.org/).
 
+## [0.1.0-phase1.5a] — 2026-06-09
+
+ConfigLayer. The data layer Phase 1.5b (providers + onboard driver) and
+1.5c (UI + cli wiring) will build on.
+
+### Added
+- **`ConfigField` plugin registry** in `@gmft/core`
+  (`registerConfigField`, `getConfigFields`, `_clearConfigFields`).
+  Future phases can register their own config fields; the onboarding
+  driver picks them up automatically. Documented extension point in
+  `packages/core/src/config/registry.ts`.
+- **`OnboardRuntime` interface** — `{ getSecret, setSecret,
+  validateProvider, providers }`. The shape fields 1.5b will need
+  (provider-module list, validation callback) is declared now so 1.5b
+  is purely additive.
+- **TOML config loader/saver** at `$XDG_CONFIG_HOME/gmft/config.toml`
+  (default `~/.config/gmft/config.toml`). `loadConfig()` returns
+  defaults when the file is missing; `saveConfig()` writes the file
+  (no atomic-rename yet — see code TODO). Forward-compat: unknown
+  top-level sections are preserved across round-trips via the
+  `[k: string]: unknown` index signature.
+- **`SecretStore` interface** with two implementations:
+  - `KeytarStore` (preferred; OS keyring via `keytar` 7.9)
+  - `EnvFileStore` (fallback; `~/.config/gmft/secrets.env` mode 0600,
+    shell-sourceable `KEY=VALUE` format)
+- **`createSecretStore({ service })` factory** with load-time probe
+  that silently falls back to `EnvFileStore` when keytar fails to
+  load. TODO: when honoring `secrets.backend` from `config.toml`, accept
+  an explicit preference and re-throw on probe failure when the user
+  explicitly chose `keytar`.
+
+### Stub
+- `packages/core/src/llm/providers/types.ts` — minimal `ProviderModule`
+  type. Replaced in 1.5b with the full shape (id, displayName,
+  authFields, defaultEndpoint?, modelCatalog, validate).
+
+### Tests
++7 new `it()` cases across 3 new test files (registry, config, secrets).
+Phase 1.5a running total: 23 → 30. (Plan said 6; added an XDG-unset
+fallback test for `configDir()` per code-review recommendation.)
+
 ## [0.1.0-phase1] — 2026-06-08
 
 Phase 1 of the v0.1 plan ships: the TUI scaffold, theming, tab system,
