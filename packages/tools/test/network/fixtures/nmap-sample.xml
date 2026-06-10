@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE nmaprun>
+<nmaprun scanner="nmap" args="nmap -oX - scanme.nmap.org" start="1700000000" version="7.94">
+  <scaninfo type="syn" protocol="tcp" numservices="3" services="22,80,443"/>
+  <host>
+    <status state="up"/>
+    <address addr="45.33.32.156" addrtype="ipv4"/>
+    <hostnames>
+      <hostname name="scanme.nmap.org" type="user"/>
+    </hostnames>
+    <ports>
+      <port protocol="tcp" portid="22">
+        <state state="open"/>
+        <service name="ssh" product="OpenSSH" version="6.6.1p1"/>
+      </port>
+      <port protocol="tcp" portid="80">
+        <state state="open"/>
+        <service name="http" product="Apache httpd" version="2.4.7"/>
+      </port>
+      <port protocol="tcp" portid="443">
+        <state state="closed"/>
+        <service name="https"/>
+      </port>
+    </ports>
+  </host>
+  <runstats>
+    <finished time="1700000060" elapsed="60"/>
+    <hosts up="1" down="0" total="1"/>
+  </runstats>
+</nmaprun>
