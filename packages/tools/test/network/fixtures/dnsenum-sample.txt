@@ -1,0 +1,31 @@
+dnsenum.pl VERSION 1.2.6
+
+-----   example.com   -----
+
+Host's addresses:
+__________________
+
+example.com.                            93.184.216.34
+
+
+Name Servers:
+__________________
+
+ns1.example.com.                        93.184.216.34
+ns2.example.com.                        93.184.216.35
+
+
+MX (Mail Exchange) record(s):
+__________________
+
+mail.example.com.                       pref=10
+
+
+Trying zone transfer on ns1.example.com:
+AXFR failed.
+
+Brute forcing:
+__________________
+
+www.example.com.
+mail.example.com.
