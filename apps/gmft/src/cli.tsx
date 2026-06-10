@@ -25,6 +25,7 @@ import {
 import { AgentApp } from './AgentApp.js';
 import { createOnboardRuntime } from './onboard/runtime.js';
 import { bindProviderUI } from './onboard/bind-provider-ui.js';
+import { SessionStore } from './session/store.js';
 
 const cli = meow(
   `
@@ -115,6 +116,32 @@ const initialStatus = {
   ...(cli.flags.target ? { target: cli.flags.target } : {}),
 };
 
+// Set up the session store. We try to resume the previous session (if
+// `current-session-id` points at a log file) so the TUI comes up with
+// the same conversation the user was in last time. The store itself
+// never throws at construction; missing roots just return [].
+const session = new SessionStore();
+let initialMessages: import('./ui/components/Message.js').Message[] = [];
+try {
+  const id = await session.currentId();
+  if (id) {
+    const turns = await session.load(id);
+    initialMessages = turns.map((t, i) => ({
+      id: `m-${t.id ?? i + 1}`,
+      role: t.role,
+      content: t.content,
+      ts: t.ts ?? Date.now(),
+    }));
+  }
+} catch (err) {
+  // Resume failures are non-fatal — the TUI will start with an empty
+  // chat and `/session list` will show what was found.
+  console.error(
+    'Session resume failed:',
+    err instanceof Error ? err.message : String(err),
+  );
+}
+
 // Look up the API key for the configured provider. Openrouter/ollama
 // do not require a key (the secret may be unset for them; ollama passes
 // the literal 'ollama' through the factory).
@@ -162,6 +189,22 @@ const { waitUntilExit } = render(
       provider: config.llm.provider,
       model: config.llm.model,
       username,
+    },
+    session,
+    ...(initialMessages.length > 0 ? { initialMessages } : {}),
+    onTurnComplete: ({ user, assistant }) => {
+      // Persist both halves of the turn. The store is async but the
+      // TUI's onTurnComplete is fire-and-forget here — we log on
+      // failure but don't block the render loop.
+      session
+        .append(user)
+        .then(() => session.append(assistant))
+        .catch((err: unknown) => {
+          console.error(
+            'Session append failed:',
+            err instanceof Error ? err.message : String(err),
+          );
+        });
     },
   }),
 );
