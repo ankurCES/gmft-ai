@@ -21,7 +21,23 @@ async function renderApp(props: React.ComponentProps<typeof App> = {}) {
 
 describe('App (e2e)', () => {
   it('/help shows the commands list in the chat', async () => {
-    const { stdin, lastFrame } = await renderApp();
+    // The slash dispatcher is wired via onSubmit in production (AgentApp
+    // composes dispatchSlash into a real onSubmit). For an e2e smoke
+    // test, we mirror that: a tiny onSubmit that recognizes /help and
+    // /clear (the most common path) and echoes everything else.
+    const onSubmit = async (v: string): Promise<Msg | null> => {
+      if (v === '/help') {
+        return {
+          id: 'help-1',
+          role: 'assistant',
+          content:
+            'Commands:\n' + '  /help\n' + '  /clear\n' + '  /model\n' + '  /provider\n',
+          ts: 0,
+        };
+      }
+      return { id: 'echo-1', role: 'assistant', content: v, ts: 0 };
+    };
+    const { stdin, lastFrame } = await renderApp({ onSubmit });
     stdin.write('/help');
     await tick();
     stdin.write('\r');
@@ -33,7 +49,13 @@ describe('App (e2e)', () => {
   });
 
   it('echoes the user message in the transcript', async () => {
-    const { stdin, lastFrame } = await renderApp();
+    const onSubmit = async (v: string): Promise<Msg | null> => ({
+      id: 'echo-1',
+      role: 'assistant',
+      content: v,
+      ts: 0,
+    });
+    const { stdin, lastFrame } = await renderApp({ onSubmit });
     stdin.write('hello gmft');
     await tick();
     stdin.write('\r');
@@ -43,19 +65,49 @@ describe('App (e2e)', () => {
   });
 
   it('/clear wipes the transcript', async () => {
-    const { stdin, lastFrame } = await renderApp();
+    // /clear is special: it has to mutate messages state. In production
+    // it's the slash dispatcher's `clearMessages` flag. Here we simulate
+    // it by giving the parent a controlled `messages` list and pushing
+    // [] back on /clear.
+    const onSubmit = async (v: string): Promise<Msg | null> => {
+      if (v === '/help') {
+        return {
+          id: 'help-1',
+          role: 'assistant',
+          content: 'Commands (phase 1, scaffold only): blah blah',
+          ts: 0,
+        };
+      }
+      return null;
+    };
+    const ControlledClear = (): React.JSX.Element => {
+      const [msgs, setMsgs] = React.useState<Msg[]>([]);
+      return (
+        <App
+          messages={msgs}
+          onMessagesChange={setMsgs}
+          onSubmit={async (v) => {
+            if (v === '/clear') {
+              setMsgs([]);
+              return null;
+            }
+            return onSubmit(v);
+          }}
+        />
+      );
+    };
+    const { stdin, lastFrame } = render(React.createElement(ControlledClear));
+    await tick();
     stdin.write('/help');
     await tick();
     stdin.write('\r');
     await tick();
-    expect(lastFrame() ?? '').toContain('Commands');
+    expect(lastFrame() ?? '').toContain('Commands (phase 1, scaffold only)');
 
     stdin.write('/clear');
     await tick();
     stdin.write('\r');
     await tick();
-    // After /clear, the only message is the freshly added user "/clear" line.
-    // The previous "Commands" assistant message should be gone.
     const frame = lastFrame() ?? '';
     expect(frame).not.toContain('Commands (phase 1, scaffold only)');
   });

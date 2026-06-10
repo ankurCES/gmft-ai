@@ -13,7 +13,7 @@ describe('App (smoke)', () => {
   it('shows the system welcome message on first render', () => {
     const { lastFrame } = render(React.createElement(App));
     const frame = lastFrame() ?? '';
-    expect(frame).toContain('TUI scaffold');
+    expect(frame).toContain('GMFT-AI v0.1.0-phase1');
   });
 
   it('shows status rail with model=none when no provider is configured', () => {
