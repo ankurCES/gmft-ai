@@ -206,6 +206,58 @@ arrive in phase 2 / phase 1.5a-1.5h.
   phase 2; pulled forward — see plan §11). Adds tasks 1.5a-1.5h and +4 tests.
   Phase 1 test total: 5 → 9. v0.1 test total: 50 → 54.
 
+## [0.1.0-phase1.5e] — 2026-06-10
+
+Slash commands + JSONL session persistence. App is now a controlled
+component; AgentApp owns chat state and the slash dispatcher. Builds
+on 1.5d's streaming LLM hook.
+
+### Added
+- `App` is a **controlled component** — it takes `messages` and
+  `onMessagesChange` as props. The TUI is unaware of the LLM or
+  sessions; it just renders. `AgentApp` (in `apps/gmft/src/AgentApp.tsx`)
+  wires `messages` + `dispatchSlash` into `App.onSubmit`.
+- `SessionStore` (`apps/gmft/src/session/store.ts`) — JSONL-backed
+  session log + current-session pointer. Methods: `start`, `setCurrent`,
+  `append`, `load`, `current`, `list`, `currentId`, `clear`,
+  `pathFor`. `SessionStore.noop()` returns a `NoopSessionStore` that
+  touches no filesystem (used by AgentApp when no session is provided,
+  e.g. tests).
+- `PreviewTurn` type — `Turn` + optional `ts` + optional `id`. The
+  store's `load()` / `current()` hydrate `ts` from `meta.ts` first,
+  then a top-level `ts` (so `ChatMessage`-shaped writes round-trip),
+  then the file mtime. `id` is the 1-based line number.
+- **Slash commands** (handled by `dispatchSlash` in
+  `apps/gmft/src/session/commands.ts`):
+  - `/help` — show commands list
+  - `/clear` — clear chat messages
+  - `/model <id>` — switch model in-memory (no LLM call, no persist)
+  - `/provider <id>` — switch provider in-memory; clears model
+  - `/session new [id]` — start a new session, set current pointer
+  - `/session list` — list sessions (id, turn count, mtime, current)
+  - `/session load <id>` — load a session, replace chat messages
+  - `/session clear` — clear current pointer (logs kept on disk)
+  - `/resume` — alias for `/session load current`
+  - `/exit` — exit the TUI
+- `cli.tsx` now creates a `SessionStore`, resumes the previous
+  conversation on startup (via `currentId()` + `load()` →
+  `initialMessages`), and persists every LLM turn via
+  `onTurnComplete`. Resume failures are logged but non-fatal.
+
+### Changed
+- `AgentApp` accepts `session?`, `initialMessages?`, `onTurnComplete?`,
+  `onExit?`. When `session` is omitted, slash commands that need
+  persistence return a "no current session" reply; the LLM turns
+  are not persisted.
+
+### Tests
+- 73 passing in `apps/gmft` (up from 41 in 1.5d). New:
+  - 12 `SessionStore` tests (round-trip, list ordering, noop,
+    missing-file, current pointer races, etc.)
+  - 2 hydrator tests (`meta.ts`, top-level `ts`)
+  - 20 slash-command tests (every command + edge cases)
+- Total workspace: **138 tests** (64 core + 73 apps/gmft + 1 testkit).
+
 ## [0.0.0] — 2026-06-08
 
 ### Added
