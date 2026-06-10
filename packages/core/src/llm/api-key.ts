@@ -20,7 +20,7 @@
  * <provider> requires apiKey"), so a `''` return is safe — it surfaces
  * as a chat-visible error on the next LLM turn instead of a crash.
  */
-import { createSecretStore, type SecretStore } from '../config/secrets.js';
+import { createSecretStore, type SecretStore, type SecretBackend } from '../config/secrets.js';
 
 const SERVICE = 'gmft';
 
@@ -33,9 +33,10 @@ export type GetApiKey = (provider: string) => Promise<string>;
 export async function lookupApiKey(
   provider: string,
   store?: SecretStore,
+  preferred?: SecretBackend,
 ): Promise<string> {
   try {
-    const s = store ?? (await createSecretStore({ service: SERVICE }));
+    const s = store ?? (await createSecretStore({ service: SERVICE, preferred }));
     return (await s.get(`${provider}.apiKey`)) ?? '';
   } catch {
     // Secret store probe failed (keytar binding missing, permission
