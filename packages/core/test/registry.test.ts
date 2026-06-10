@@ -4,7 +4,7 @@ import {
   getConfigFields,
   _clearConfigFields,
   type ConfigField,
-} from './registry.js';
+} from '../src/config/registry.js';
 
 const noopField = (id: string, order: number): ConfigField => ({
   id,
