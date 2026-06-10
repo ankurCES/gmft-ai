@@ -48,13 +48,19 @@ import type { Chokepoint, ChokepointCall, Decision } from '../chokepoint/index.j
 
 // v0.1 phase 3 — extended union. The phase 2 variants are unchanged,
 // so existing tests for `text-delta` / `done` / `error` still pass.
+//
+// v0.1 phase 5 — `confirmation-needed` grows an optional `prompt` field
+// that, when present, signals a `type-then-confirm` decision. The TUI
+// uses `prompt` to render a literal-typing input instead of a y/n.
+// The field is backward-compatible: tests / UI that only care about
+// y/n can ignore it.
 export type AgentEvent =
   | { type: 'text-delta'; text: string }
   | { type: 'done'; text: string }
   | { type: 'error'; error: Error }
   | { type: 'tool-call-request'; id: string; name: string; args: Record<string, unknown> }
   | { type: 'tool-result'; id: string; name: string; ok: boolean; output?: unknown; reason?: string }
-  | { type: 'confirmation-needed'; id: string; name: string; reason: string };
+  | { type: 'confirmation-needed'; id: string; name: string; reason: string; prompt?: string };
 
 export interface RunTurnOpts {
   /** Pre-built `LanguageModel` from `createModel(...)`. */
@@ -72,12 +78,14 @@ export interface RunTurnOpts {
   /** The chokepoint gate. Required iff `tools` is non-empty. */
   chokepoint?: Chokepoint;
   /**
-   * Awaited when the chokepoint returns `confirm`. The TUI wires this
-   * to a y/n prompt; tests can stub it with `async () => true|false`.
-   * The `id` is unique per tool call; the TUI uses it to map the
-   * user's y/n back to the right awaiting promise.
+   * Awaited when the chokepoint returns `confirm` or
+   * `type-then-confirm`. The TUI wires this to a y/n prompt (or
+   * literal-typing input when `prompt` is present); tests can stub
+   * it with `async () => true|false`. The `id` is unique per tool
+   * call; the TUI uses it to map the user's answer back to the right
+   * awaiting promise.
    */
-  onConfirmation?: (call: { id: string; name: string; args: Record<string, unknown>; reason: string }) => Promise<boolean>;
+  onConfirmation?: (call: { id: string; name: string; args: Record<string, unknown>; reason: string; prompt?: string }) => Promise<boolean>;
   /** Per-tool-call context. Defaults to `process.cwd()` + `process.env`. */
   ctx?: ToolContext;
   /** Max tool-call steps. Default 5. Set to 1 to match phase 2 behavior exactly. */
@@ -160,11 +168,13 @@ export async function* runTurn(opts: RunTurnOpts): AsyncIterable<AgentEvent> {
           if (decision.kind === 'deny') {
             throw new Error(`chokepoint denied: ${decision.reason}`);
           }
-          if (decision.kind === 'confirm') {
+          if (decision.kind === 'confirm' || decision.kind === 'type-then-confirm') {
             // The loop has already awaited onConfirmation. If we got
-            // here, the user approved. (If they denied, the loop
-            // short-circuited the SDK's execute call by throwing a
-            // tool-result into the message stream; we never get here.)
+            // here, the user approved (typed the literal prompt for
+            // `type-then-confirm`, or answered y for `confirm`).
+            // (If they denied, the loop short-circuited the SDK's
+            // execute call by throwing a tool-result into the message
+            // stream; we never get here.)
             void id;
             void onConfirmation;
           }
@@ -235,6 +245,7 @@ export async function* runTurn(opts: RunTurnOpts): AsyncIterable<AgentEvent> {
             category: tool.category,
             flags: tool.flags,
             args: parsedArgs,
+            typeToConfirm: tool.typeToConfirm,
           };
           return opts.chokepoint!.decide(chokepointCall);
         })();
@@ -258,11 +269,27 @@ export async function* runTurn(opts: RunTurnOpts): AsyncIterable<AgentEvent> {
           continue;
         }
 
-        if (decision.kind === 'confirm') {
-          // Emit the confirmation-needed event and await the user's y/n.
-          yield { type: 'confirmation-needed', id: toolCallId, name: toolName, reason: decision.reason };
+        if (decision.kind === 'confirm' || decision.kind === 'type-then-confirm') {
+          // Emit the confirmation-needed event and await the user's
+          // answer. For `type-then-confirm` we also pass the literal
+          // `prompt` the user must type; the TUI uses it to render a
+          // literal-typing input instead of a y/n.
+          const prompt = decision.kind === 'type-then-confirm' ? decision.prompt : undefined;
+          yield {
+            type: 'confirmation-needed',
+            id: toolCallId,
+            name: toolName,
+            reason: decision.reason,
+            ...(prompt !== undefined ? { prompt } : {}),
+          };
           const approved = opts.onConfirmation
-            ? await opts.onConfirmation({ id: toolCallId, name: toolName, args, reason: decision.reason })
+            ? await opts.onConfirmation({
+                id: toolCallId,
+                name: toolName,
+                args,
+                reason: decision.reason,
+                ...(prompt !== undefined ? { prompt } : {}),
+              })
             : false;
           if (!approved) {
             yield {

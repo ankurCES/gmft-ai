@@ -1,5 +1,5 @@
 /**
- * Tests for the chokepoint's three built-in rules + the aggregator's
+ * Tests for the chokepoint's four built-in rules + the aggregator's
  * rule order. The rule order is contractual (documented in
  * `rules.ts`); the bottom-of-file tests assert it so any reorder
  * is a breaking change that requires an ADR.
@@ -135,7 +135,33 @@ describe('createChokepoint', () => {
     });
   });
 
-  describe('rule order (elevation -> destructive -> target -> allow)', () => {
+  describe('typeToConfirm rule', () => {
+    it('returns a type-then-confirm decision when typeToConfirm is set', () => {
+      const cp = createChokepoint(baseEnv);
+      const d = cp.decide(call({ typeToConfirm: 'attack' }));
+      expect(d).toEqual({
+        kind: 'type-then-confirm',
+        reason: 'tool "test" is high-friction; type "attack" to confirm',
+        prompt: 'attack',
+      });
+    });
+
+    it('does NOT fire for tools that have no typeToConfirm', () => {
+      const cp = createChokepoint(baseEnv);
+      expect(cp.decide(call({ flags: [] })).kind).toBe('allow');
+    });
+
+    it('typeToConfirm beats plain destructive: a tool that has both gets the stricter prompt', () => {
+      const cp = createChokepoint(baseEnv);
+      const d = cp.decide(call({ flags: ['destructive'], typeToConfirm: 'attack' }));
+      expect(d.kind).toBe('type-then-confirm');
+      if (d.kind === 'type-then-confirm') {
+        expect(d.prompt).toBe('attack');
+      }
+    });
+  });
+
+  describe('rule order (elevation -> destructive -> typeToConfirm -> target -> allow)', () => {
     it('elevation beats destructive: elevated+destructive denies without elevation', () => {
       const cp = createChokepoint(baseEnv);
       const d = cp.decide(call({ flags: ['destructive', 'requiresElevation'] }));
@@ -163,6 +189,18 @@ describe('createChokepoint', () => {
       expect(d.kind).toBe('deny');
       if (d.kind === 'deny') {
         expect(d.reason).toMatch(/illegal characters/);
+      }
+    });
+
+    it('elevation beats typeToConfirm: elevated+typeToConfirm denies without elevation', () => {
+      const cp = createChokepoint(baseEnv);
+      const d = cp.decide(call({
+        flags: ['requiresElevation'],
+        typeToConfirm: 'attack',
+      }));
+      expect(d.kind).toBe('deny');
+      if (d.kind === 'deny') {
+        expect(d.reason).toMatch(/GMFT_ALLOW_ELEVATION/);
       }
     });
   });

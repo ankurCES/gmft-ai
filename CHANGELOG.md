@@ -4,6 +4,86 @@ All notable changes to GMFT-AI are documented here.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning: [Semantic](https://semver.org/).
 
+## [0.1.0-phase5] — 2026-06-16
+
+Adds the web-app pentest and wifi-evil-twin tool families, a new
+chokepoint `type-then-confirm` decision kind for high-friction tools
+(`evil_twin`, future wifi deauth, …), and the `Dockerfile.web` image
+for the 5 web tools. Focus: a single agent can now run a full
+attack chain — recon → web → wifi — under a uniform chokepoint
+gate, with the destructive tools demanding a literal typed
+confirmation rather than a casual y/n.
+
+### Added
+- **5 web tools** in `packages/tools/src/web/`:
+  - `nuclei_run` (template-driven scanner, JSONL output)
+  - `nikto_scan` (web server scanner, JSON output)
+  - `gobuster_dir` (directory/file bruteforce)
+  - `ffuf_fuzz` (web fuzzer)
+  - `sqlmap_inject` (SQLi detection/exploitation, JSON output)
+  Each tool: Zod input/output schemas, `category: 'binary'`,
+  `flags: ['destructive', 'targetRequired']`, `execFileNoShell`
+  runner, stdout/stderr capture, exit-code propagation, shared
+  `prereq` + `runner` + `stream` test helpers in
+  `packages/tools/src/shared/`.
+- **1 wifi tool**: `evil_twin` in `packages/tools/src/wifi/`. Drives
+  `fluxion` (hostapd + dnsmasq + captive portal) inside a detached
+  `tmux` session. `flags: ['destructive', 'requiresElevation']`,
+  `typeToConfirm: 'attack'`. Dry-mode via `GMFT_DRY=1` (no actual
+  process spawn, returns a synthetic log path).
+- **Chokepoint `type-then-confirm`**: new `Decision` variant
+  `{ kind: 'type-then-confirm', reason, prompt }`. Any tool that
+  declares `Tool.typeToConfirm` fires this decision; the user must
+  type the literal `prompt` (e.g. `attack`) and press Enter to
+  approve. Aggregator order is
+  `checkElevation → checkTypeToConfirm → checkDestructive →
+  checkTarget → allow` so type-to-confirm beats plain destructive
+  (a tool with both gets the stricter prompt).
+- **`ApprovalPrompt` type-to-confirm mode**: when the
+  `pendingApprovals[i].prompt` is set, the prompt switches from
+  y/n to a literal-typing input. Backspace is supported. Esc
+  denies. Rendered as `chokepoint type-to-confirm` (vs the plain
+  `chokepoint confirm`) so the user can tell at a glance which
+  mode they're in.
+- **`Dockerfile.web`**: `docker/Dockerfile.web` builds an
+  `alpine:3.20` image with nuclei, nikto, gobuster, ffuf, sqlmap
+  preinstalled. Used by the web tools' `findBinary` shim when
+  `GMFT_DOCKER=web` is set.
+- **Tool catalog barrel**: `packages/tools/src/catalog.ts` exports
+  the full ordered list of 11 tools (1 shell + 1 osint + 1 packets
+  + 4 network + 5 web + 1 wifi). `packages/tools/src/index.ts`
+  re-exports it under `ALL_TOOLS`.
+
+### Tests
+- 5 web tools × 3 cases each = 15 new tests
+  (`packages/tools/test/web/*.test.ts`).
+- 1 wifi tool × 4 cases = 4 new tests
+  (`packages/tools/test/wifi/evil-twin.test.ts`).
+- 4 chokepoint tests for the new `typeToConfirm` rule
+  (`packages/core/test/chokepoint.test.ts`).
+- 5 `ApprovalPrompt` tests for type-to-confirm mode
+  (`apps/gmft/test/approval-prompt.test.tsx`): renders prompt
+  literal, approves on exact match + Enter, denies on partial
+  match + Enter, denies on Esc, supports backspace.
+- 1 executor-test update for the new 2-arg `onConfirmation`
+  signature (the agent loop's separate `onConfirmation` keeps its
+  own signature, augmented with optional `prompt`).
+
+### Changed
+- `Tool<I,O>` interface in `packages/core/src/tools/types.ts`
+  gains `typeToConfirm?: string` (forward-declared, all 6 prior
+  tools leave it undefined so the chokepoint is unchanged for
+  them).
+- `ChokepointCall` carries `typeToConfirm`; `Decision` union grows
+  the new variant.
+- `executor.onConfirmation` now receives the `Decision` as a 2nd
+  arg so the handler can dispatch on `kind` (and render the
+  correct UI). The agent loop's `runTurn.onConfirmation` callback
+  separately gains an optional `prompt` field; AgentApp wires it
+  into `pendingApprovals`.
+- `App` component's `pendingApprovals` shape grows the optional
+  `prompt` field; `App.tsx` passes it through to `<ApprovalPrompt>`.
+
 ## [0.1.0-phase1.5h] — 2026-06-16
 
 Completes the four items 1.5a-1.5g deferred from the phase 1

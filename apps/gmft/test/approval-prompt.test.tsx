@@ -100,4 +100,102 @@ describe('ApprovalPrompt', () => {
     // The full 200-char string should NOT be in the rendered frame.
     expect(frame).not.toContain('x'.repeat(200));
   });
+
+  describe('type-to-confirm mode', () => {
+    it('renders the literal prompt + Enter hint, hides y/n', async () => {
+      const { lastFrame } = await renderPrompt({
+        id: 'tc-6',
+        name: 'evil_twin',
+        args: { ssid: 'corp-wifi' },
+        reason: 'high-friction; type "attack" to confirm',
+        prompt: 'attack',
+        onResolve: () => {},
+      });
+      const frame = lastFrame() ?? '';
+      expect(frame).toContain('chokepoint type-to-confirm');
+      expect(frame).toContain('type');
+      expect(frame).toContain('attack');
+      expect(frame).toContain('[Enter]');
+      // y/n hint should NOT appear in type-to-confirm mode.
+      expect(frame).not.toContain('[Y]');
+      expect(frame).not.toContain('[N]');
+    });
+
+    it('approves when the user types the exact prompt and presses Enter', async () => {
+      const onResolve = vi.fn();
+      const { stdin } = await renderPrompt({
+        id: 'tc-7',
+        name: 'evil_twin',
+        args: { ssid: 'corp-wifi' },
+        reason: 'high-friction',
+        prompt: 'attack',
+        onResolve,
+      });
+      // ink-testing-library emits each char as a separate input event;
+      // tick() between writes so React's state update flushes.
+      for (const ch of 'attack') {
+        stdin.write(ch);
+        await tick();
+      }
+      stdin.write('\r'); // Enter
+      await tick();
+      expect(onResolve).toHaveBeenCalledWith(true);
+      expect(onResolve).toHaveBeenCalledTimes(1);
+    });
+
+    it('denies when the user presses Enter with a wrong / partial match', async () => {
+      const onResolve = vi.fn();
+      const { stdin } = await renderPrompt({
+        id: 'tc-8',
+        name: 'evil_twin',
+        args: { ssid: 'corp-wifi' },
+        reason: 'high-friction',
+        prompt: 'attack',
+        onResolve,
+      });
+      for (const ch of 'attac') {
+        stdin.write(ch);
+        await tick();
+      }
+      stdin.write('\r');
+      await tick();
+      expect(onResolve).toHaveBeenCalledWith(false);
+    });
+
+    it('denies on Esc in type-to-confirm mode', async () => {
+      const onResolve = vi.fn();
+      const { stdin } = await renderPrompt({
+        id: 'tc-9',
+        name: 'evil_twin',
+        args: { ssid: 'corp-wifi' },
+        reason: 'high-friction',
+        prompt: 'attack',
+        onResolve,
+      });
+      stdin.write('\u001B');
+      await tick();
+      expect(onResolve).toHaveBeenCalledWith(false);
+    });
+
+    it('supports backspace to correct the typed input', async () => {
+      const onResolve = vi.fn();
+      const { stdin } = await renderPrompt({
+        id: 'tc-10',
+        name: 'evil_twin',
+        args: { ssid: 'corp-wifi' },
+        reason: 'high-friction',
+        prompt: 'attack',
+        onResolve,
+      });
+      for (const ch of 'attackk') {
+        stdin.write(ch);
+        await tick();
+      }
+      stdin.write('\u007F');   // backspace
+      await tick();
+      stdin.write('\r');        // Enter
+      await tick();
+      expect(onResolve).toHaveBeenCalledWith(true);
+    });
+  });
 });

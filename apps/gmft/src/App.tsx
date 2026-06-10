@@ -51,6 +51,8 @@ export interface AppProps {
     name: string;
     args: Record<string, unknown>;
     reason: string;
+    /** v0.1 phase 5 — when set, render type-to-confirm UI. */
+    prompt?: string;
   }>;
   onApprovalResolve?: (id: string, approved: boolean) => void;
 }
@@ -191,6 +193,7 @@ export function App({
               name={p.name}
               args={p.args}
               reason={p.reason}
+              {...(p.prompt !== undefined ? { prompt: p.prompt } : {})}
               onResolve={(approved) => onApprovalResolve?.(p.id, approved)}
               theme={theme}
             />

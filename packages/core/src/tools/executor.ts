@@ -8,8 +8,9 @@
  *   2. Validate `args` against the tool's Zod input schema.
  *   3. Ask the chokepoint for a `Decision`.
  *      - `deny`        ⇒ return `{ ok: false, reason, decision }`
- *      - `confirm`     ⇒ call `opts.onConfirmation(call)`. If it
- *                         resolves `false`, return denial.
+ *      - `confirm`     ⇒ call `opts.onConfirmation(call, decision)`.
+ *      - `type-then-confirm` ⇒ same; UI uses `decision.prompt` to render
+ *                         a type-to-confirm input.
  *      - `allow`       ⇒ run `tool.run(parsed.data, ctx)`.
  *   4. Validate the runner's output against the tool's Zod output schema.
  *   5. Return `{ ok: true, output, decision }`.
@@ -34,12 +35,19 @@ export type ExecuteResult =
 
 export interface ExecuteOpts {
   /**
-   * Handler for `confirm` decisions. If absent, a confirm-required call
-   * is denied with a clear reason ("no handler provided"). The agent
-   * loop wires this to a `Map<id, resolver>` in `useAgent`; tests
-   * can pass a stub that resolves `true` or `false` directly.
+   * Handler for `confirm` and `type-then-confirm` decisions. The
+   * second argument is the decision itself, so the handler can tell
+   * the two apart and render the right UI (simple y/n vs. type-input).
+   *
+   * If absent, a confirm-required call is denied with a clear reason
+   * ("no handler provided"). The agent loop wires this to a
+   * `Map<id, resolver>` in `useAgent`; tests can pass a stub that
+   * resolves `true` or `false` directly.
    */
-  onConfirmation?: (call: ExecuteCall) => Promise<boolean>;
+  onConfirmation?: (
+    call: ExecuteCall,
+    decision: Extract<Decision, { kind: 'confirm' | 'type-then-confirm' }>,
+  ) => Promise<boolean>;
 }
 
 export async function execute(
@@ -74,13 +82,14 @@ export async function execute(
     category: tool.category,
     flags: tool.flags,
     args: parsed.data,
+    typeToConfirm: tool.typeToConfirm,
   };
   const decision = chokepoint.decide(chokepointCall);
 
   if (decision.kind === 'deny') {
     return { ok: false, reason: decision.reason, decision };
   }
-  if (decision.kind === 'confirm') {
+  if (decision.kind === 'confirm' || decision.kind === 'type-then-confirm') {
     if (!opts.onConfirmation) {
       return {
         ok: false,
@@ -88,7 +97,7 @@ export async function execute(
         decision,
       };
     }
-    const approved = await opts.onConfirmation(call);
+    const approved = await opts.onConfirmation(call, decision);
     if (!approved) {
       return { ok: false, reason: 'user denied confirmation', decision };
     }
