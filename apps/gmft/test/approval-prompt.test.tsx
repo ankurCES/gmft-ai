@@ -1,0 +1,103 @@
+import { render } from 'ink-testing-library';
+import type { ReactElement } from 'react';
+import { describe, expect, it, vi } from 'vitest';
+import React from 'react';
+import { ApprovalPrompt } from '../src/ui/components/ApprovalPrompt.js';
+import { makeTheme } from '../src/ui/theme.js';
+
+const theme = makeTheme('dark');
+
+const tick = (): Promise<void> => new Promise<void>((resolve) => setImmediate(resolve));
+
+async function renderPrompt(
+  props: Omit<React.ComponentProps<typeof ApprovalPrompt>, 'theme'>,
+) {
+  const result = render(React.createElement(ApprovalPrompt, { ...props, theme }) as ReactElement);
+  await tick();
+  return result;
+}
+
+describe('ApprovalPrompt', () => {
+  it('renders the tool name, args, reason, and y/n hint', async () => {
+    const { lastFrame } = await renderPrompt({
+      id: 'tc-1',
+      name: 'shell_exec',
+      args: { argv: ['ls', '-la'] },
+      reason: 'destructive; confirm to proceed',
+      onResolve: () => {},
+    });
+    const frame = lastFrame() ?? '';
+    expect(frame).toContain('chokepoint confirm');
+    expect(frame).toContain('shell_exec');
+    // The argv array is summarized (not serialized verbatim) so the
+    // user can scan the prompt quickly. Long argv lives in the audit log.
+    expect(frame).toContain('argv=[2 items]');
+    expect(frame).toContain('destructive; confirm to proceed');
+    expect(frame).toContain('[Y]');
+    expect(frame).toContain('[N]');
+    expect(frame).toContain('id=tc-1');
+  });
+
+  it('calls onResolve(true) when y is pressed', async () => {
+    const onResolve = vi.fn();
+    const { stdin } = await renderPrompt({
+      id: 'tc-2',
+      name: 'shell_exec',
+      args: { argv: ['echo', 'hi'] },
+      reason: 'destructive',
+      onResolve,
+    });
+    stdin.write('y');
+    await tick();
+    expect(onResolve).toHaveBeenCalledWith(true);
+    expect(onResolve).toHaveBeenCalledTimes(1);
+  });
+
+  it('calls onResolve(false) when n is pressed', async () => {
+    const onResolve = vi.fn();
+    const { stdin } = await renderPrompt({
+      id: 'tc-3',
+      name: 'shell_exec',
+      args: { argv: ['rm', '-rf', '/'] },
+      reason: 'destructive',
+      onResolve,
+    });
+    stdin.write('n');
+    await tick();
+    expect(onResolve).toHaveBeenCalledWith(false);
+    expect(onResolve).toHaveBeenCalledTimes(1);
+  });
+
+  it('calls onResolve(false) when Esc is pressed', async () => {
+    const onResolve = vi.fn();
+    const { stdin } = await renderPrompt({
+      id: 'tc-4',
+      name: 'shell_exec',
+      args: { argv: ['whoami'] },
+      reason: 'destructive',
+      onResolve,
+    });
+    stdin.write('\u001B'); // ESC
+    await tick();
+    expect(onResolve).toHaveBeenCalledWith(false);
+  });
+
+  it('truncates a long string arg for display', async () => {
+    const long = 'x'.repeat(200);
+    const { lastFrame } = await renderPrompt({
+      id: 'tc-5',
+      name: 'http_post',
+      args: { body: long, url: 'https://example.com/api' },
+      reason: 'destructive',
+      onResolve: () => {},
+    });
+    const frame = lastFrame() ?? '';
+    // The 200-char body is truncated with an ellipsis.
+    expect(frame).toContain('...');
+    // The short url is shown verbatim.
+    expect(frame).toContain('body=');
+    expect(frame).toContain('url=https://example.com/api');
+    // The full 200-char string should NOT be in the rendered frame.
+    expect(frame).not.toContain('x'.repeat(200));
+  });
+});
