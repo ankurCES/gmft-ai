@@ -2,11 +2,14 @@
 /**
  * gmft — terminal-first agentic pentest runtime.
  *
- * Phase 1.5c entry: run onboarding if config is missing (or
- * `--reconfigure` is set), then mount the TUI with the resolved
- * `provider:model` in the status rail.
+ * Phase 1.5d entry: runs onboarding, then mounts the TUI via `AgentApp`,
+ * which wires the real LLM `onSubmit` to `App`. The LLM call is a
+ * single `streamText` round-trip (no tools yet — chokepoint lands in
+ * phase 3). API keys live in the SecretStore; we look them up after
+ * onboarding, before the render.
  */
 import meow from 'meow';
+import { hostname, userInfo } from 'node:os';
 import React from 'react';
 import { render } from 'ink';
 import {
@@ -16,9 +19,10 @@ import {
   registerConfigField,
   createLlmProviderField,
   runOnboarding,
+  createSecretStore,
   type GmftConfig,
 } from '@gmft/core';
-import { App } from './App.js';
+import { AgentApp } from './AgentApp.js';
 import { createOnboardRuntime } from './onboard/runtime.js';
 import { bindProviderUI } from './onboard/bind-provider-ui.js';
 
@@ -111,11 +115,54 @@ const initialStatus = {
   ...(cli.flags.target ? { target: cli.flags.target } : {}),
 };
 
+// Look up the API key for the configured provider. Openrouter/ollama
+// do not require a key (the secret may be unset for them; ollama passes
+// the literal 'ollama' through the factory).
+let apiKey = '';
+try {
+  const store = await createSecretStore({ service: 'gmft' });
+  apiKey = (await store.get(`${config.llm.provider}.apiKey`)) ?? '';
+} catch (err) {
+  // Keytar probe failures are non-fatal — the TUI will show the LLM
+  // error when the first turn is submitted.
+  console.error(
+    'Secret store unavailable:',
+    err instanceof Error ? err.message : String(err),
+  );
+}
+
+let username = 'unknown';
+try {
+  username = userInfo().username || 'unknown';
+} catch {
+  /* sandbox env without uid */
+}
+let host = 'unknown';
+try {
+  host = hostname() || 'unknown';
+} catch {
+  /* same */
+}
+
 const { waitUntilExit } = render(
-  React.createElement(App, {
+  React.createElement(AgentApp, {
     themeName,
     initialStatus,
     initialConfig: { provider: config.llm.provider, model: config.llm.model },
+    model: {
+      provider: config.llm.provider,
+      model: config.llm.model,
+      apiKey,
+      ...(config.llm.endpoint ? { endpoint: config.llm.endpoint } : {}),
+    },
+    env: {
+      hostname: host,
+      os: process.platform,
+      sandboxMode: config.sandbox.mode,
+      provider: config.llm.provider,
+      model: config.llm.model,
+      username,
+    },
   }),
 );
 
