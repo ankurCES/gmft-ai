@@ -4,6 +4,7 @@ import { ChatTab } from './ui/tabs/ChatTab.js';
 import { FindingsTab } from './ui/tabs/FindingsTab.js';
 import { HelpTab } from './ui/tabs/HelpTab.js';
 import { TabBar, type TabId } from './ui/components/TabBar.js';
+import { ApprovalPrompt } from './ui/components/ApprovalPrompt.js';
 import type { Message as Msg } from './ui/components/Message.js';
 import { makeTheme, type Theme } from './ui/theme.js';
 import type { StatusInfo } from './ui/components/StatusRail.js';
@@ -38,6 +39,20 @@ export interface AppProps {
    */
   onExit?: () => void;
   themeName?: 'auto' | 'dark' | 'light' | 'high-contrast';
+  /**
+   * v0.1 phase 3.5: chokepoint `confirm` decisions surface as
+   * `<ApprovalPrompt>` rows above the chat. When the array is empty
+   * the prompts are not rendered. `onResolve` is the user's y/n.
+   * AgentApp owns the lifecycle (ref-based resolver + visible state);
+   * App just renders.
+   */
+  pendingApprovals?: ReadonlyArray<{
+    id: string;
+    name: string;
+    args: Record<string, unknown>;
+    reason: string;
+  }>;
+  onApprovalResolve?: (id: string, approved: boolean) => void;
 }
 
 const TAB_ORDER: TabId[] = ['chat', 'findings', 'help'];
@@ -53,6 +68,8 @@ export function App({
   onSubmit,
   onExit,
   themeName = 'auto',
+  pendingApprovals = [],
+  onApprovalResolve,
 }: AppProps): React.JSX.Element {
   const theme: Theme = makeTheme(themeName);
   const { exit } = useApp();
@@ -161,6 +178,25 @@ export function App({
         <Text>{theme.banner(' gmft-ai ')}</Text>
       </Box>
       <TabBar active={activeTab} theme={theme} />
+      {/* v0.1 phase 3.5: chokepoint confirmations render above the
+          active tab so the user always sees a pending prompt regardless
+          of which tab they're on. When the array is empty, no row
+          appears; the layout is unchanged from 1.5f. */}
+      {pendingApprovals.length > 0 && (
+        <Box flexDirection="column" marginBottom={1}>
+          {pendingApprovals.map((p) => (
+            <ApprovalPrompt
+              key={p.id}
+              id={p.id}
+              name={p.name}
+              args={p.args}
+              reason={p.reason}
+              onResolve={(approved) => onApprovalResolve?.(p.id, approved)}
+              theme={theme}
+            />
+          ))}
+        </Box>
+      )}
       {activeTab === 'chat' && (
         <ChatTab
           messages={messages}

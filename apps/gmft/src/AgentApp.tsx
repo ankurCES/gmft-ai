@@ -24,7 +24,7 @@
  * about the async apiKey lookup.
  */
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   buildSystemPrompt,
   createModel,
@@ -200,6 +200,44 @@ export function AgentApp({
     setActiveModel(model);
   }, [activeProvider]);
 
+  // Pending chokepoint confirmations. The agent loop's `onConfirmation`
+  // callback resolves the user's y/n for any `confirm` decision. AgentApp
+  // keeps two pieces of state:
+  //   - a Map of resolvers (a ref — the loop reads it, not the UI)
+  //   - a visible array of pending entries (state — drives the render)
+  // The `<ApprovalPrompt>` component onResolve() pops the entry and
+  // calls the resolver.
+  //
+  // The ref+state split is necessary because the runTurn call site is
+  // a useCallback (stable across renders) and can't read state without
+  // a re-create. The ref lets the callback always see the latest
+  // resolvers; the state is what the UI subscribes to.
+  type PendingApproval = { id: string; name: string; args: Record<string, unknown>; reason: string };
+  const [pendingApprovals, setPendingApprovals] = useState<PendingApproval[]>([]);
+  const approvalResolversRef = useRef<Map<string, (approved: boolean) => void>>(new Map());
+
+  const onConfirmation = useCallback(
+    async (call: { id: string; name: string; args: Record<string, unknown>; reason: string }): Promise<boolean> => {
+      return new Promise<boolean>((resolve) => {
+        approvalResolversRef.current.set(call.id, resolve);
+        setPendingApprovals((prev) => [
+          ...prev,
+          { id: call.id, name: call.name, args: call.args, reason: call.reason },
+        ]);
+      });
+    },
+    [],
+  );
+
+  const resolveApproval = useCallback((id: string, approved: boolean): void => {
+    const resolver = approvalResolversRef.current.get(id);
+    if (resolver) {
+      resolver(approved);
+      approvalResolversRef.current.delete(id);
+    }
+    setPendingApprovals((prev) => prev.filter((p) => p.id !== id));
+  }, []);
+
   const handleExit = useCallback(() => {
     onExit?.();
   }, [onExit]);
@@ -248,6 +286,7 @@ export function AgentApp({
           model: llmModel,
           system,
           history: [userMsg],
+          onConfirmation,
         })) {
           if (ev.type === 'text-delta') {
             buffer += ev.text;
@@ -287,7 +326,7 @@ export function AgentApp({
         };
       }
     },
-    [llmModel, system, onTurnComplete, session, messages, activeProvider, activeModel, handleSwitchModel, handleExit],
+    [llmModel, system, onTurnComplete, session, messages, activeProvider, activeModel, handleSwitchModel, handleExit, onConfirmation],
   );
 
   return (
@@ -302,6 +341,8 @@ export function AgentApp({
         model: activeModel || 'none',
       }}
       onExit={onExit ?? handleExit}
+      pendingApprovals={pendingApprovals}
+      onApprovalResolve={resolveApproval}
     />
   );
 }
