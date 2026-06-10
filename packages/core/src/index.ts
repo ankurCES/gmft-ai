@@ -58,6 +58,12 @@ export type {
 export { createLlmProviderField } from './llm/llm-provider-field.js';
 export { runOnboarding, type RunOnboardingOpts } from './llm/onboard.js';
 export { appendTurn, readLog, redactSecrets, type Turn } from './session/log.js';
+export {
+  sessionDir,
+  sessionPath,
+  currentSessionPath,
+  currentSessionIdPath,
+} from './session/paths.js';
 
 export { createModel, type CreateModelOpts } from './llm/model-factory.js';
 export { buildSystemPrompt, type PromptEnv, type PromptScope, type SandboxMode } from './llm/prompts.js';
