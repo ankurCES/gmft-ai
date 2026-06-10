@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { mkdtempSync, rmSync, writeFileSync, mkdirSync } from 'node:fs';
+import { mkdtempSync, rmSync, writeFileSync, mkdirSync, readdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { loadConfig, saveConfig, defaultConfig, configPath } from '../src/config/config.js';
@@ -54,5 +54,39 @@ describe('config', () => {
     const cfg = loadConfig();
     expect((cfg as unknown as { unknown?: { foo: string } }).unknown?.foo).toBe('bar');
     expect(cfg.llm.provider).toBe('openai');
+  });
+
+  it('saveConfig is atomic — does not leave a temp file behind on success', () => {
+    const cfg = defaultConfig();
+    cfg.ui.theme = 'dark';
+    saveConfig(cfg);
+
+    const p = configPath();
+    const parent = dirname(p);
+    const leftover = readdirSync(parent).filter(
+      (f) => f !== 'config.toml' && !f.startsWith('config.toml.')
+    );
+    // No stray .tmp / .new / similar files next to config.toml
+    expect(leftover).toEqual([]);
+
+    // The real file round-trips
+    const loaded = loadConfig();
+    expect(loaded.ui.theme).toBe('dark');
+  });
+
+  it('saveConfig overwrites an existing file in place (no extra backup left on disk)', () => {
+    const p = configPath();
+    mkdirSync(dirname(p), { recursive: true });
+    writeFileSync(p, '[llm]\nprovider = "anthropic"\nmodel = "old"\n');
+
+    const cfg = defaultConfig();
+    cfg.llm.model = 'new';
+    saveConfig(cfg);
+
+    const loaded = loadConfig();
+    expect(loaded.llm.model).toBe('new');
+    const parent = dirname(p);
+    const leftover = readdirSync(parent).filter((f) => f !== 'config.toml');
+    expect(leftover).toEqual([]);
   });
 });
