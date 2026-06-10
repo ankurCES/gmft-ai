@@ -11,12 +11,26 @@ import type { StatusInfo } from './ui/components/StatusRail.js';
 export type { TabId };
 
 export interface AppProps {
+  /**
+   * Controlled message list. If provided, App is presentational and the
+   * parent owns the chat state. If omitted, App falls back to the
+   * 1.5d-era internal-state behavior (used by tests that don't care
+   * about persistence or slash commands).
+   */
+  messages?: Msg[];
+  /** Called when a new user message is submitted. */
+  onSubmit?: (value: string) => Promise<Msg | null> | Msg | null;
+  /**
+   * Optional callback that can replace/clear the messages in response
+   * to a slash command. Called with the *next* messages array; the
+   * parent decides how to update its own state.
+   */
+  onMessagesChange?: (next: Msg[]) => void;
   initialMessages?: Msg[];
   initialHistory?: string[];
   initialStatus?: Partial<StatusInfo>;
   initialTab?: TabId;
   initialConfig?: { provider?: string; model?: string };
-  onSubmit?: (value: string) => Promise<Msg | null> | Msg | null;
   /**
    * Called once when the user requests exit (Ctrl-C). Production also calls
    * useApp().exit() to unmount. Tests pass a spy via this prop to assert the
@@ -29,6 +43,8 @@ export interface AppProps {
 const TAB_ORDER: TabId[] = ['chat', 'findings', 'help'];
 
 export function App({
+  messages: controlledMessages,
+  onMessagesChange,
   initialMessages = [],
   initialHistory = [],
   initialStatus = {},
@@ -41,7 +57,10 @@ export function App({
   const theme: Theme = makeTheme(themeName);
   const { exit } = useApp();
   const [activeTab, setActiveTab] = useState<TabId>(initialTab);
-  const [messages, setMessages] = useState<Msg[]>(
+  // Internal state is used only when the parent does NOT control messages.
+  // Tests that don't pass `messages` (e.g. `smoke.test.tsx`) get the
+  // legacy behavior; production uses `AgentApp`'s controlled mode.
+  const [internalMessages, setInternalMessages] = useState<Msg[]>(
     initialMessages.length > 0
       ? initialMessages
       : [
@@ -49,11 +68,22 @@ export function App({
             id: 'sys-welcome',
             role: 'system',
             content:
-              'GMFT-AI v0.1.0-phase1 — TUI scaffold. No LLM connected yet. Type /help for commands. Tab to switch tabs, Ctrl-C to exit.',
+              'GMFT-AI v0.1.0-phase1 — TUI shell. Type /help for commands. Tab to switch tabs, Ctrl-C to exit.',
             ts: Date.now(),
           },
         ],
   );
+  const isControlled = controlledMessages !== undefined;
+  const messages: Msg[] = isControlled ? controlledMessages : internalMessages;
+  const setMessages = (next: Msg[] | ((prev: Msg[]) => Msg[])): void => {
+    if (isControlled) {
+      const value =
+        typeof next === 'function' ? (next as (p: Msg[]) => Msg[])(controlledMessages) : next;
+      onMessagesChange?.(value);
+    } else {
+      setInternalMessages(next);
+    }
+  };
   const [history, setHistory] = useState<string[]>(initialHistory);
   const [status] = useState<StatusInfo>({
     model: initialConfig?.model ?? 'none',
@@ -97,29 +127,6 @@ export function App({
     setMessages((m) => [...m, userMsg]);
     setHistory((h) => [...h, value]);
 
-    if (value === '/help') {
-      setMessages((m) => [
-        ...m,
-        {
-          id: `a-${Date.now()}`,
-          role: 'assistant',
-          content:
-            'Commands (phase 1, scaffold only):\n' +
-            '  /help   — show this help\n' +
-            '  /clear  — clear chat (land in phase 2)\n' +
-            '  /model  — show model (land in phase 2)\n' +
-            '  /exit   — Ctrl-C to exit for now',
-          ts: Date.now(),
-        },
-      ]);
-      return;
-    }
-
-    if (value === '/clear') {
-      setMessages([]);
-      return;
-    }
-
     if (onSubmit) {
       const reply = await onSubmit(value);
       if (reply) {
@@ -128,7 +135,8 @@ export function App({
       return;
     }
 
-    // Default echo so the user sees the TUI is alive.
+    // Default echo so the user sees the TUI is alive (used by tests
+    // that don't pass an onSubmit).
     setMessages((m) => [
       ...m,
       {
@@ -139,6 +147,10 @@ export function App({
       },
     ]);
   };
+
+  // Silence the unused-import warning (kept available for future
+  // scroll/focus behaviors that need an effect on messages.length).
+  void messages.length;
 
   return (
     // InputBox is the only focusable in the tree (useFocus + autoFocus).
