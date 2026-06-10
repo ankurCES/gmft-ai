@@ -1,0 +1,18 @@
+- Nikto v2.5.0
+---------------------------------------------------------------------------
++ Target IP:          10.0.0.5
++ Target Hostname:    example.com
++ Target Port:        443
+---------------------------------------------------------------------------
++ SSL Info:        Subject: /CN=example.com
+                   Ciphers: ECDHE-RSA-AES128-GCM-SHA256
++ Start Time:         2025-12-25 00:00:00 (UTC0)
+---------------------------------------------------------------------------
++ Server: nginx/1.21.6
++ The anti-clickjacking X-Frame-Options header is not present.
++ /admin/: Admin login page found.
++ /phpmyadmin/: phpMyAdmin login page found.
++ /server-status: Apache server status page found.
++ 7894 items checked: 0 error(s) and 4 item(s) reported on this host
+---------------------------------------------------------------------------
++ 1 host(s) tested
