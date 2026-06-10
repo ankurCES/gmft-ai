@@ -62,6 +62,16 @@ export class SessionStore {
   }
 
   /**
+   * Returns a no-op SessionStore. All reads return empty/null; all
+   * writes silently succeed without touching the filesystem. Useful
+   * for tests and for mounting the TUI before a session has been
+   * resolved (the no-resume path of cli.tsx).
+   */
+  static noop(): SessionStore {
+    return new NoopSessionStore();
+  }
+
+  /**
    * Choose a session id. If `id` is provided, return it as-is. Otherwise,
    * generate a slug from the local time + 6 hex chars of randomness.
    * The slug is filesystem-safe (no path separators, no whitespace).
@@ -115,15 +125,38 @@ export class SessionStore {
   }
 
   /** Read the current session's turns. Empty array if no current session. */
-  async current(): Promise<Turn[]> {
+  async current(): Promise<PreviewTurn[]> {
     const id = await this.currentId();
     if (!id) return [];
     return this.load(id);
   }
 
-  /** Read a specific session's turns. Empty array if the log is missing. */
-  async load(id: string): Promise<Turn[]> {
-    return readLog(this.pathFor(id));
+  /**
+   * Read a specific session's turns. Empty array if the log is missing.
+   *
+   * Each returned `PreviewTurn` has `ts` (from `meta.ts` if present,
+   * else a top-level `ts` field written by the agent loop, else the
+   * file's mtime) and `id` (1-based line number) filled in so the UI
+   * can render them without re-reading the file.
+   */
+  async load(id: string): Promise<PreviewTurn[]> {
+    const path = this.pathFor(id);
+    if (!existsSync(path)) return [];
+    const turns = await readLog(path);
+    const mtime = (await stat(path)).mtimeMs;
+    return turns.map((t, i) => {
+      const metaTs = typeof t.meta?.ts === 'number' ? (t.meta.ts as number) : undefined;
+      // Some writers (the AgentApp turn loop) put `ts` at the top level
+      // because `ChatMessage` has a top-level `ts?`. Accept that too.
+      const topTs = typeof (t as unknown as { ts?: unknown }).ts === 'number'
+        ? ((t as unknown as { ts: number }).ts)
+        : undefined;
+      return {
+        ...t,
+        ts: metaTs ?? topTs ?? mtime,
+        id: String(i + 1),
+      };
+    });
   }
 
   /**
@@ -179,3 +212,71 @@ export class SessionStore {
 
 // Re-export the `Turn` type for downstream consumers.
 export type { Turn };
+
+/**
+ * A turn as returned by `load()` / `current()`. Extends `Turn` with two
+ * synthetic fields useful for the UI layer (and not stored on disk):
+ *
+ * - `ts`: timestamp in ms (from `meta.ts` if present, else the file mtime).
+ * - `id`: 1-based line number in the JSONL log (stable across reloads).
+ *
+ * Both are optional because the source-of-truth on disk is `Turn`; these
+ * are filled in by the store when reading the log.
+ */
+export type PreviewTurn = Turn & {
+  ts?: number;
+  id?: string;
+};
+
+/**
+ * A SessionStore that touches no filesystem state. Reads return empty
+ * values; writes are silent no-ops. Used by AgentApp when the caller
+ * didn't supply a session (tests, the no-resume CLI path).
+ *
+ * Subclasses SessionStore structurally (extends + overrides) so the
+ * type remains `SessionStore` — call sites don't need a separate type
+ * to handle the no-op case.
+ */
+export class NoopSessionStore extends SessionStore {
+  constructor() {
+    // Use a path we know is read-only-on-test-roots. The constructor
+    // doesn't touch the fs, so this is safe.
+    super({ root: '/tmp/gmft-noop-never-created', currentIdPath: '/tmp/gmft-noop-never-created/current-session-id' });
+  }
+
+  override async ensure(): Promise<void> {
+    // no-op
+  }
+
+  override async start(id: string = SessionStore.generateId()): Promise<string> {
+    return id;
+  }
+
+  override async setCurrent(id: string): Promise<void> {
+    void id;
+  }
+
+  override async append(_turn: Turn): Promise<void> {
+    void _turn;
+  }
+
+  override async current(): Promise<PreviewTurn[]> {
+    return [];
+  }
+
+  override async load(_id: string): Promise<PreviewTurn[]> {
+    return [];
+  }
+
+  override async list(): Promise<SessionInfo[]> {
+    return [];
+  }
+
+  override async currentId(): Promise<string | null> {
+    return null;
+  }
+
+  override async clear(): Promise<void> {
+    // no-op
+  }
+}
