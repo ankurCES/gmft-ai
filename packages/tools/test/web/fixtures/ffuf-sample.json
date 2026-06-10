@@ -1,0 +1,50 @@
+{
+  "commandline": "ffuf -u https://example.com/FUZZ -w /tmp/wl.txt -json",
+  "time": "2025-12-25T00:00:00+00:00",
+  "results": [
+    {
+      "input": {"FUZZ": "admin"},
+      "position": 1,
+      "status": 200,
+      "length": 1234,
+      "words": 56,
+      "lines": 30,
+      "content-type": "text/html",
+      "url": "https://example.com/admin",
+      "host": "example.com"
+    },
+    {
+      "input": {"FUZZ": "login"},
+      "position": 2,
+      "status": 200,
+      "length": 980,
+      "words": 32,
+      "lines": 18,
+      "content-type": "text/html",
+      "url": "https://example.com/login",
+      "host": "example.com"
+    },
+    {
+      "input": {"FUZZ": "uploads"},
+      "position": 3,
+      "status": 301,
+      "length": 0,
+      "words": 0,
+      "lines": 0,
+      "content-type": "text/html",
+      "url": "https://example.com/uploads",
+      "host": "example.com"
+    },
+    {
+      "input": {"FUZZ": "api"},
+      "position": 4,
+      "status": 403,
+      "length": 564,
+      "words": 22,
+      "lines": 9,
+      "content-type": "text/html",
+      "url": "https://example.com/api",
+      "host": "example.com"
+    }
+  ]
+}

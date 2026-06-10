@@ -4,11 +4,13 @@
  *   - a `Decision`   — the rule denies or asks for confirmation
  *
  * The aggregator in `./index.ts` composes them in order:
- *   1. `checkElevation` — most restrictive first; an unprivileged caller
- *      can't even *see* a destructive tool's confirmation prompt.
- *   2. `checkDestructive` — `destructive` tools always Confirm.
- *   3. `checkTarget`     — target format + private-network denylist.
- *   4. `Allow`           — default.
+ *   1. `checkElevation`     — most restrictive first; an unprivileged
+ *      caller can't even *see* a destructive tool's confirmation prompt.
+ *   2. `checkTypeToConfirm` — tools that require the user to type a
+ *      literal get that stricter prompt (overrides plain `confirm`).
+ *   3. `checkDestructive`   — `destructive` tools always Confirm.
+ *   4. `checkTarget`        — target format + private-network denylist.
+ *   5. `Allow`              — default.
  *
  * The order is tested in `chokepoint.test.ts`. Changing it is a breaking
  * change for any operator who has memorized the rule order from an audit
@@ -108,4 +110,20 @@ export function checkElevation(call: ChokepointCall, env: ChokepointEnv): Decisi
     };
   }
   return null;
+}
+
+/**
+ * If the call carries a `typeToConfirm` literal, the user must type it
+ * to confirm. This is layered on top of `destructive` so it works
+ * automatically for any tool that declares `typeToConfirm` — the
+ * type-to-confirm prompt replaces (not supplements) the simple
+ * confirm prompt.
+ */
+export function checkTypeToConfirm(call: ChokepointCall): Decision | null {
+  if (!call.typeToConfirm) return null;
+  return {
+    kind: 'type-then-confirm',
+    reason: `tool "${call.tool}" is high-friction; type "${call.typeToConfirm}" to confirm`,
+    prompt: call.typeToConfirm,
+  };
 }

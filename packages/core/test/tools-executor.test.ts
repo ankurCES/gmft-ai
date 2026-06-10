@@ -55,14 +55,15 @@ describe('execute', () => {
     r.register(echo);
     const call: ExecuteCall = { name: 'echo', args: { text: 'hi' } };
     const onConfirmation = vi.fn(async () => true);
+    const decision: Decision = { kind: 'confirm', reason: 'are you sure?' };
     const result = await execute(
       call,
       baseCtx,
-      fakeChokepoint({ kind: 'confirm', reason: 'are you sure?' }),
+      fakeChokepoint(decision),
       r,
       { onConfirmation },
     );
-    expect(onConfirmation).toHaveBeenCalledWith(call);
+    expect(onConfirmation).toHaveBeenCalledWith(call, decision);
     expect(result.ok).toBe(true);
     if (result.ok) {
       expect(result.output).toEqual({ echoed: 'hi' });

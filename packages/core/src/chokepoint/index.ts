@@ -8,13 +8,19 @@
  */
 
 import type { Chokepoint, ChokepointCall, Decision, ChokepointEnv } from './decision.js';
-import { checkDestructive, checkElevation, checkTarget } from './rules.js';
+import {
+  checkDestructive,
+  checkElevation,
+  checkTarget,
+  checkTypeToConfirm,
+} from './rules.js';
 
 export function createChokepoint(env: ChokepointEnv): Chokepoint {
   return {
     decide(call: ChokepointCall): Decision {
       return (
         checkElevation(call, env) ??
+        checkTypeToConfirm(call) ??
         checkDestructive(call) ??
         checkTarget(call, env) ??
         { kind: 'allow' }

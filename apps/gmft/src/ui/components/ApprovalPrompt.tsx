@@ -11,23 +11,36 @@ export interface ApprovalPromptProps {
   args: Record<string, unknown>;
   /** Chokepoint-supplied reason (e.g. "destructive; confirm to proceed"). */
   reason: string;
+  /**
+   * v0.1 phase 5 — when set, the user must type this literal string
+   * (verbatim) to approve. Esc / Enter-without-match denies. Renders
+   * a typing prompt instead of the y/n prompt. Undefined = plain y/n.
+   */
+  prompt?: string;
   /** Resolves true if the user approves, false if they deny. */
   onResolve: (approved: boolean) => void;
   theme: Theme;
 }
 
 /**
- * ApprovalPrompt — a y/n prompt for chokepoint `confirm` decisions.
+ * ApprovalPrompt — a y/n or type-to-confirm prompt for chokepoint
+ * `confirm` / `type-then-confirm` decisions.
  *
  * The agent loop emits a `confirmation-needed` event when the chokepoint
  * says a tool call needs user approval. AgentApp turns that into an
  * entry in a `pendingApprovals` map and renders THIS component. The
- * component takes focus, listens for y/n/Esc, and calls `onResolve`
- * exactly once. AgentApp removes the entry from the map on resolve
- * and the prompt unmounts.
+ * component takes focus, listens for y/n/Esc (plain mode) or typed
+ * input (type-to-confirm mode), and calls `onResolve` exactly once.
+ * AgentApp removes the entry from the map on resolve and the prompt
+ * unmounts.
  *
- * Y or y -> approve
- * N or n, Esc -> deny
+ * Plain mode (no `prompt` prop):
+ *   Y or y -> approve
+ *   N or n, Esc -> deny
+ *
+ * Type-to-confirm mode (when `prompt` is set):
+ *   user types the literal `prompt` string and presses Enter -> approve
+ *   Esc -> deny
  *
  * The component is intentionally self-contained (does not import any
  * state from outside). AgentApp owns the lifecycle; the component is
@@ -38,6 +51,7 @@ export function ApprovalPrompt({
   name,
   args,
   reason,
+  prompt,
   onResolve,
   theme,
 }: ApprovalPromptProps): React.JSX.Element {
@@ -46,10 +60,32 @@ export function ApprovalPrompt({
   // when resolved.
   useFocus({ autoFocus: true });
   const [pulsed, setPulsed] = useState(false);
+  // Type-to-confirm mode: accumulate input + Enter.
+  const [typed, setTyped] = useState('');
 
   useInput((input, key) => {
     if (key.escape) {
       onResolve(false);
+      return;
+    }
+    if (prompt !== undefined) {
+      // Type-to-confirm mode.
+      if (key.return) {
+        onResolve(typed === prompt);
+        return;
+      }
+      if (key.backspace || key.delete) {
+        setTyped((t) => t.slice(0, -1));
+        setPulsed(true);
+        setTimeout(() => setPulsed(false), 120);
+        return;
+      }
+      // Ignore control keys / non-printable; just append printable chars.
+      if (input && !key.ctrl && !key.meta) {
+        setTyped((t) => t + input);
+        setPulsed(true);
+        setTimeout(() => setPulsed(false), 120);
+      }
       return;
     }
     if (input === 'y' || input === 'Y') {
@@ -80,7 +116,7 @@ export function ApprovalPrompt({
     >
       <Box>
         <Text>
-          {theme.warn('⚠ chokepoint confirm  ')}
+          {theme.warn(`⚠ chokepoint ${prompt !== undefined ? 'type-to-confirm  ' : 'confirm  '}`)}
           {theme.muted('id=')}
           {id}
         </Text>
@@ -103,17 +139,37 @@ export function ApprovalPrompt({
           <Text color="yellow">{reason}</Text>
         </Text>
       </Box>
-      <Box marginTop={1}>
-        <Text>
-          {theme.muted('press ')}
-          <Text color="green">[Y]</Text>
-          {theme.muted(' to approve  ')}
-          <Text color="red">[N]</Text>
-          {theme.muted(' or ')}
-          <Text color="red">[Esc]</Text>
-          {theme.muted(' to deny')}
-        </Text>
-      </Box>
+      {prompt !== undefined ? (
+        <>
+          <Box marginTop={1}>
+            <Text>
+              {theme.muted('type  ')}
+              <Text color="cyan">{prompt}</Text>
+              {theme.muted('  then press ')}
+              <Text color="green">[Enter]</Text>
+            </Text>
+          </Box>
+          <Box>
+            <Text>
+              {theme.muted('input ')}
+              <Text color={typed === prompt ? 'green' : 'gray'}>[{typed || ' '}]</Text>
+              <Text color="gray">_</Text>
+            </Text>
+          </Box>
+        </>
+      ) : (
+        <Box marginTop={1}>
+          <Text>
+            {theme.muted('press ')}
+            <Text color="green">[Y]</Text>
+            {theme.muted(' to approve  ')}
+            <Text color="red">[N]</Text>
+            {theme.muted(' or ')}
+            <Text color="red">[Esc]</Text>
+            {theme.muted(' to deny')}
+          </Text>
+        </Box>
+      )}
     </Box>
   );
 }

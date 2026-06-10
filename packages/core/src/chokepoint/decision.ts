@@ -21,6 +21,12 @@
 export type Decision =
   | { kind: 'allow' }
   | { kind: 'confirm'; reason: string }
+  | {
+      /** High-friction: user must type the literal `prompt` to confirm. */
+      kind: 'type-then-confirm';
+      reason: string;
+      prompt: string;
+    }
   | { kind: 'deny'; reason: string };
 
 export interface ChokepointCall {
@@ -38,6 +44,12 @@ export interface ChokepointCall {
   flags: readonly string[];
   /** Parsed (Zod-validated) tool input. */
   args: Record<string, unknown>;
+  /**
+   * Optional literal the user must type to confirm. Set by the executor
+   * from the `Tool.typeToConfirm` field. When present, the chokepoint
+   * returns `type-then-confirm` instead of `confirm`.
+   */
+  typeToConfirm?: string;
 }
 
 export interface ChokepointEnv {

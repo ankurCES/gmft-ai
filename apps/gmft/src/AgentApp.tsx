@@ -239,7 +239,11 @@ export function AgentApp({
   // a useCallback (stable across renders) and can't read state without
   // a re-create. The ref lets the callback always see the latest
   // resolvers; the state is what the UI subscribes to.
-  type PendingApproval = { id: string; name: string; args: Record<string, unknown>; reason: string };
+  // v0.1 phase 5 — the chokepoint gate. `prompt` is set when the
+  // decision was `type-then-confirm`; the user must type the literal
+  // `prompt` string to approve. For plain `confirm` it's undefined
+  // and the UI renders a y/n.
+  type PendingApproval = { id: string; name: string; args: Record<string, unknown>; reason: string; prompt?: string };
   const [pendingApprovals, setPendingApprovals] = useState<PendingApproval[]>([]);
   const approvalResolversRef = useRef<Map<string, (approved: boolean) => void>>(new Map());
 
@@ -252,12 +256,18 @@ export function AgentApp({
   const chokepointRef = useRef<ReturnType<typeof createChokepoint> | null>(null);
 
   const onConfirmation = useCallback(
-    async (call: { id: string; name: string; args: Record<string, unknown>; reason: string }): Promise<boolean> => {
+    async (call: { id: string; name: string; args: Record<string, unknown>; reason: string; prompt?: string }): Promise<boolean> => {
       return new Promise<boolean>((resolve) => {
         approvalResolversRef.current.set(call.id, resolve);
         setPendingApprovals((prev) => [
           ...prev,
-          { id: call.id, name: call.name, args: call.args, reason: call.reason },
+          {
+            id: call.id,
+            name: call.name,
+            args: call.args,
+            reason: call.reason,
+            ...(call.prompt !== undefined ? { prompt: call.prompt } : {}),
+          },
         ]);
       });
     },
