@@ -42,3 +42,11 @@ export const VERSION = '0.1.0-phase1';
 export function version(): string {
   return VERSION;
 }
+
+export {
+  registerConfigField,
+  getConfigFields,
+  _clearConfigFields,
+  type ConfigField,
+  type OnboardRuntime,
+} from './config/registry.js';
