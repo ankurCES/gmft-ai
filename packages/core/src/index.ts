@@ -5,38 +5,6 @@
  * that returns nothing. Real implementations land in phases 2+.
  */
 
-export type ProviderId = 'anthropic' | 'openai' | 'google' | 'openrouter' | 'ollama';
-
-export interface LlmConfig {
-  provider: ProviderId;
-  model: string;
-  /** Resolved at runtime; never log this. */
-  apiKey?: string;
-  /** Resolved at runtime; never log this. */
-  endpoint?: string;
-}
-
-export interface SandboxConfig {
-  mode: 'docker' | 'host';
-  defaultImage?: string;
-}
-
-export interface ChokepointConfig {
-  allowPrivateNetworks: boolean;
-  denylist: string[];
-}
-
-export interface UiConfig {
-  theme: 'auto' | 'dark' | 'light' | 'high-contrast';
-}
-
-export interface GmftConfig {
-  llm: LlmConfig;
-  sandbox: SandboxConfig;
-  chokepoint: ChokepointConfig;
-  ui: UiConfig;
-}
-
 export const VERSION = '0.1.0-phase1';
 
 export function version(): string {
@@ -50,3 +18,17 @@ export {
   type ConfigField,
   type OnboardRuntime,
 } from './config/registry.js';
+
+export {
+  defaultConfig,
+  loadConfig,
+  saveConfig,
+  configPath,
+  configDir,
+  type GmftConfig,
+  type LlmConfig,
+  type SandboxConfig,
+  type ChokepointConfig,
+  type UiConfig,
+  type SecretsMeta,
+} from './config/config.js';
