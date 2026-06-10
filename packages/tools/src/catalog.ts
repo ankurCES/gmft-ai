@@ -11,6 +11,7 @@ import { sqlmapTool } from './web/sqlmap';
 import { evilTwinTool } from './wifi/evil-twin';
 import { wifiDeauthTool } from './wifi/deauth';
 import { wifiteScanTool } from './wifi/wifite-scan';
+import { reportWriteTool } from './reports/write';
 import type { z } from 'zod';
 
 /**
@@ -84,6 +85,11 @@ export const tools: Array<{ name: string; category: string; flags: readonly stri
     category: wifiteScanTool.category,
     flags: wifiteScanTool.flags,
   },
+  {
+    name: reportWriteTool.name,
+    category: reportWriteTool.category,
+    flags: reportWriteTool.flags,
+  },
 ];
 
 export { shellExecTool };
@@ -101,4 +107,6 @@ export {
 export { evilTwinTool } from './wifi/index';
 export { wifiDeauthTool } from './wifi/deauth';
 export { wifiteScanTool } from './wifi/wifite-scan';
+export { reportWriteTool } from './reports/write';
+export { readSelections, writeSelections } from './reports/selections';
 export type { z };

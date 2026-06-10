@@ -9,4 +9,7 @@ export * from './shared/runner';
 export * from './shared/stream';
 export * from './shell/shell-exec';
 export * from './network';
+export * from './reports/selections';
+export { defaultReportPath, reportsDir, resolveOutputPath } from './reports/write';
+export { FindingsStore, type FindingsStoreOpts, type Finding, type Severity, FindingSchema, SeveritySchema } from '@gmft/core';
 export { tools, shellExecTool, nmapTool, dnsenumTool, theHarvesterTool, whatwebTool } from './catalog';

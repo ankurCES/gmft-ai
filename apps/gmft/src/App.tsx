@@ -1,5 +1,5 @@
 import { Box, Text, useApp, useInput } from 'ink';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { ChatTab } from './ui/tabs/ChatTab.js';
 import { FindingsTab } from './ui/tabs/FindingsTab.js';
 import { HelpTab } from './ui/tabs/HelpTab.js';
@@ -8,6 +8,8 @@ import { ApprovalPrompt } from './ui/components/ApprovalPrompt.js';
 import type { Message as Msg } from './ui/components/Message.js';
 import { makeTheme, type Theme } from './ui/theme.js';
 import type { StatusInfo } from './ui/components/StatusRail.js';
+import type { Finding } from '@gmft/core';
+import { FindingsStore, defaultReportPath } from '@gmft/tools';
 
 export type { TabId };
 
@@ -55,6 +57,15 @@ export interface AppProps {
     prompt?: string;
   }>;
   onApprovalResolve?: (id: string, approved: boolean) => void;
+  /**
+   * v0.1 phase 6: the directory holding the session's findings.jsonl
+   * + .selections.json. When provided along with `sessionId`, the
+   * FindingsTab is loaded with real findings and a working sidecar.
+   * The session id is opaque to the App — the parent (AgentApp or
+   * tests) decides where findings live.
+   */
+  baseDir?: string;
+  sessionId?: string;
 }
 
 const TAB_ORDER: TabId[] = ['chat', 'findings', 'help'];
@@ -72,10 +83,54 @@ export function App({
   themeName = 'auto',
   pendingApprovals = [],
   onApprovalResolve,
+  baseDir,
+  sessionId,
 }: AppProps): React.JSX.Element {
   const theme: Theme = makeTheme(themeName);
   const { exit } = useApp();
   const [activeTab, setActiveTab] = useState<TabId>(initialTab);
+  // v0.1 phase 6: load findings + selections on mount, and re-load
+  // whenever the user switches to the Findings tab. The store is
+  // read-only from the App's perspective — the FindingsTab owns the
+  // sidecar (selections) autosave.
+  const [findings, setFindings] = useState<readonly Finding[]>(() => {
+    if (!baseDir || !sessionId) return [];
+    try {
+      return new FindingsStore({ baseDir, sessionId }).list();
+    } catch {
+      return [];
+    }
+  });
+  useEffect(() => {
+    if (!baseDir || !sessionId) return;
+    if (activeTab !== 'findings') return;
+    try {
+      setFindings(new FindingsStore({ baseDir, sessionId }).list());
+    } catch {
+      // Malformed findings.jsonl → leave the prior state in place.
+    }
+  }, [activeTab, baseDir, sessionId]);
+  // The `r` key on the Findings tab calls this; we dispatch a slash
+  // command the existing message pipeline can handle. We build the
+  // prompt the way the spec's plan §B.2 calls for: "write a report
+  // of this session's findings to <path>". The path is the default
+  // report path (so the user knows exactly where the file lands).
+  const handleGenerateReport = async (): Promise<void> => {
+    if (!baseDir || !sessionId) return;
+    const targetPath = defaultReportPath(sessionId, 'markdown');
+    const prompt = `write a report of this session's findings to ${targetPath}`;
+    if (onSubmit) {
+      const reply = await onSubmit(prompt);
+      if (reply) {
+        // Mirror the chat update on the App's controlled state so
+        // the user sees the synthetic "report" message in context.
+        const next: Msg[] = controlledMessages
+          ? [...controlledMessages, reply]
+          : [];
+        onMessagesChange?.(next);
+      }
+    }
+  };
   // Internal state is used only when the parent does NOT control messages.
   // Tests that don't pass `messages` (e.g. `smoke.test.tsx`) get the
   // legacy behavior; production uses `AgentApp`'s controlled mode.
@@ -209,7 +264,18 @@ export function App({
           theme={theme}
         />
       )}
-      {activeTab === 'findings' && <FindingsTab theme={theme} status={status} />}
+      {activeTab === 'findings' && (
+        <FindingsTab
+          theme={theme}
+          status={status}
+          {...(baseDir !== undefined ? { baseDir } : {})}
+          {...(sessionId !== undefined ? { sessionId } : {})}
+          findings={findings}
+          onGenerateReport={() => {
+            void handleGenerateReport();
+          }}
+        />
+      )}
       {activeTab === 'help' && <HelpTab theme={theme} />}
     </Box>
   );

@@ -13,17 +13,21 @@ describe('tools catalog — wifi tools registered', () => {
     const names = tools.map((t) => t.name);
     expect(names).toContain('wifi_deauth');
     expect(names).toContain('wifite_scan');
+    expect(names).toContain('report_write');
 
     const deauth = tools.find((t) => t.name === 'wifi_deauth');
     const scan = tools.find((t) => t.name === 'wifite_scan');
+    const report = tools.find((t) => t.name === 'report_write');
     expect(deauth?.category).toBe('binary');
     expect(scan?.category).toBe('binary');
+    expect(report?.category).toBe('file');
     expect(deauth?.flags).toEqual(
       expect.arrayContaining(['destructive', 'requiresElevation']),
     );
     expect(scan?.flags).toEqual(
       expect.arrayContaining(['destructive', 'requiresElevation']),
     );
+    expect(report?.flags).toEqual(expect.arrayContaining(['destructive']));
   });
 
   it('exports the wifi tool definitions for direct import', () => {
