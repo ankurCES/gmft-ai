@@ -1,7 +1,8 @@
 import { parse, stringify } from 'smol-toml';
-import { readFileSync, writeFileSync, mkdirSync, existsSync } from 'node:fs';
+import { readFileSync, mkdirSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { homedir } from 'node:os';
+import { atomicWriteFileSync } from './atomic-write.js';
 
 export interface LlmConfig {
   provider: 'anthropic' | 'openai' | 'google' | 'openrouter' | 'ollama';
@@ -73,5 +74,5 @@ export function loadConfig(): GmftConfig {
 export function saveConfig(cfg: GmftConfig): void {
   const p = configPath();
   mkdirSync(join(configDir(), 'gmft'), { recursive: true });
-  writeFileSync(p, stringify(cfg));
+  atomicWriteFileSync(p, stringify(cfg));
 }
