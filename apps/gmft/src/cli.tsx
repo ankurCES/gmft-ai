@@ -151,7 +151,16 @@ try {
 let apiKey = '';
 let getApiKey: (provider: string) => Promise<string> = async () => '';
 try {
-  const store = await createSecretStore({ service: 'gmft' });
+  // 1.5h: honor the user's chosen secrets.backend from config.toml.
+  // When the user explicitly chose 'keytar', probe failures are
+  // surfaced as a chat-visible error rather than a silent downgrade
+  // to envfile. The try/catch below preserves the prior behaviour of
+  // "non-fatal at boot, error visible at first LLM turn" because
+  // bindGetApiKey() swallows store.get errors itself.
+  const store = await createSecretStore({
+    service: 'gmft',
+    preferred: config.secrets?.backend,
+  });
   apiKey = (await store.get(`${config.llm.provider}.apiKey`)) ?? '';
   getApiKey = bindGetApiKey(store);
 } catch (err) {

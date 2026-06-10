@@ -4,6 +4,57 @@ All notable changes to GMFT-AI are documented here.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning: [Semantic](https://semver.org/).
 
+## [0.1.0-phase1.5h] — 2026-06-16
+
+Completes the four items 1.5a-1.5g deferred from the phase 1
+amendment. Focus: the secret store must not silently corrupt
+its own state on a crash mid-write, and the user's chosen
+`secrets.backend` from `config.toml` must be honoured by the
+boot path (not just the LLM-call path).
+
+### Fixed
+- `EnvFileStore.writeAll` in `packages/core/src/config/secrets.ts`
+  now opens the file itself with `openSync`, writes via
+  `writeFileSync(fd, …)`, calls `fsyncSync(fd)` to force the
+  page-cache flush before `chmodSync(0o600)`, and closes the fd
+  in a `try/finally`. The previous `writeFileSync(p, …)` +
+  `chmodSync` sequence could leave the file with the new
+  permissions and the old content (or no content) after a crash
+  because the kernel was free to reorder the inode update against
+  the page-cache flush. Discovered in 1.5a code review; landed now.
+- `createSecretStore` in `packages/core/src/config/secrets.ts`
+  now accepts a `preferred?: SecretBackend` argument. The boot
+  path in `apps/gmft/src/cli.tsx` passes `config.secrets?.backend`
+  through so a user who explicitly chose `keytar` in config gets a
+  visible error on keytar probe failure rather than a silent
+  downgrade to envfile. The onboarding runtime (`onboard/runtime.ts`)
+  intentionally still passes no `preferred` — at first run the
+  user is *choosing* the backend, and there's no `config.toml`
+  to read from yet. `lookupApiKey(provider, store?, preferred?)`
+  in `packages/core/src/llm/api-key.ts` accepts the same option
+  for callers that resolve the key without going through the CLI
+  boot path.
+
+### Tests
+- `EnvFileStore.writeAll fsyncs the file before chmod` (1.5h) —
+  mocks `fsyncSync` to throw, drives a write, asserts the
+  rejection carries `simulated crash` and the on-disk file is
+  never empty (it's either the pre-crash content or the
+  fully-replaced post-crash content, never a torn mix)
+- `KeytarStore.set rethrows keytar import errors as keytar-backend` (1.5h) —
+  guards against the 1.5a regression where a missing libsecret
+  binding silently fell through to envfile with no surface
+  indicator of the downgrade
+- `EnvFileStore.compositeKey roundtrips through the env file` (1.5h) —
+  regression guard for the `${provider}.apiKey` ↔
+  `provider_apiKey` env-var mapping. Without the explicit
+  `compositeKey`/`decomposeKey` pair the roundtrip is lossy
+  for keys with `-` in the provider name (e.g. `open-router`).
+
+### Test totals
+- Phase 1.5h delta: +3 tests (`secrets.test.ts`)
+- Workspace: 233 tests passing (core 123, tools 26, apps/gmft 83, testkit 1)
+
 ## [0.1.0-phase3.5] — 2026-06-15
 
 TUI chokepoint prompt + design doc delta. Builds on phase 3 by

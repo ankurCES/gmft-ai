@@ -28,6 +28,13 @@ export function createOnboardRuntime(): OnboardRuntime {
   let storePromise: Promise<SecretStore> | null = null;
   const getStore = (): Promise<SecretStore> => {
     if (!storePromise) {
+      // No `preferred` here: the onboarding runtime is the place
+      // where the user is *choosing* a backend, and the LLM provider
+      // field reads/writes `secrets.backend` as part of its prompt.
+      // Forcing a preferred value here would create a circular
+      // dependency (we'd need config to choose a backend before
+      // config exists). Silent keytar→envfile fallback is the right
+      // default for first-run.
       storePromise = createSecretStore({ service: 'gmft' }).catch((err) => {
         storePromise = null;
         throw err;

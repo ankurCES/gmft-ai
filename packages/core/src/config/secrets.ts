@@ -1,4 +1,4 @@
-import { readFileSync, writeFileSync, mkdirSync, existsSync, chmodSync } from 'node:fs';
+import { readFileSync, writeFileSync, mkdirSync, existsSync, chmodSync, openSync, closeSync, fsyncSync } from 'node:fs';
 import { join } from 'node:path';
 import { homedir } from 'node:os';
 
@@ -54,7 +54,19 @@ class EnvFileStore implements SecretStore {
     const body = Object.entries(map)
       .map(([k, v]) => `${k}=${v.replace(/\n/g, '\\n')}`)
       .join('\n');
-    writeFileSync(p, body + '\n');
+    // Open the file ourselves so we can fsync before chmod. A bare
+    // writeFileSync + chmodSync can leave the file with the new
+    // permissions but content from the previous version on disk after
+    // a crash, because the kernel may reorder the page-cache flush
+    // against the inode update. fsync forces the order. (Discovered
+    // in 1.5a code review; fixed in 1.5h.)
+    const fd = openSync(p, 'w');
+    try {
+      writeFileSync(fd, body + '\n');
+      fsyncSync(fd);
+    } finally {
+      closeSync(fd);
+    }
     chmodSync(p, 0o600);
   }
 
@@ -102,27 +114,47 @@ class KeytarStore implements SecretStore {
 
 export interface CreateOpts {
   service: string;
+  /**
+   * If the user has explicitly chosen a backend (e.g. via
+   * `secrets.backend` in `config.toml`), probe failure for `keytar`
+   * re-throws so the error surfaces instead of being silently
+   * downgraded to `envfile`. When unset (default), the factory
+   * silently falls back — useful for first-run, CI, and developer
+   * boxes where keytar's native binding is missing.
+   */
+  preferred?: SecretBackend;
 }
 
 /**
- * Returns the best SecretStore available. If `keytar` fails to load
- * (native binding missing — typical on a CI box without libsecret), falls
- * back to `EnvFileStore` silently. Callers should record `store.backend`
- * in `config.toml` under `secrets.backend` so re-runs don't switch.
+ * Returns the best SecretStore available. The probe order is:
  *
- * TODO: when honoring `secrets.backend` from config, pass an explicit
- * preference through CreateOpts and re-throw on probe failure when the
- * user explicitly chose 'keytar'. Silent fallback hides locked-keychain
- * errors from users who opted in. (See 1.5a code review.)
+ *   1. If `opts.preferred === 'envfile'`, return EnvFileStore
+ *      immediately (no probe).
+ *   2. Otherwise, probe KeytarStore. If the probe succeeds, use it.
+ *   3. If the probe throws AND `opts.preferred === 'keytar'`, re-throw
+ *      — the user asked for keytar and we can't deliver.
+ *   4. Otherwise, fall back to EnvFileStore silently.
+ *
+ * The pre-1.5h behaviour was case 4 only (always silent fallback),
+ * which hid locked-keychain errors from users who explicitly opted
+ * into keytar. (See 1.5a code review.)
  */
 export async function createSecretStore(opts: CreateOpts): Promise<SecretStore> {
+  if (opts.preferred === 'envfile') {
+    return new EnvFileStore(opts.service);
+  }
   const probe = new KeytarStore(opts.service);
   try {
     // Lazy import is the failure point on broken builds. Probing with a
     // known-missing key returns null cleanly when keytar is healthy.
     await probe.get('__gmft_probe__');
     return probe;
-  } catch {
+  } catch (err) {
+    if (opts.preferred === 'keytar') {
+      // User asked for keytar; don't silently downgrade. The caller
+      // can decide to log, display, or fall back themselves.
+      throw err;
+    }
     return new EnvFileStore(opts.service);
   }
 }
