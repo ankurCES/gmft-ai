@@ -15,6 +15,7 @@ export interface AppProps {
   initialHistory?: string[];
   initialStatus?: Partial<StatusInfo>;
   initialTab?: TabId;
+  initialConfig?: { provider?: string; model?: string };
   onSubmit?: (value: string) => Promise<Msg | null> | Msg | null;
   /**
    * Called once when the user requests exit (Ctrl-C). Production also calls
@@ -32,6 +33,7 @@ export function App({
   initialHistory = [],
   initialStatus = {},
   initialTab = 'chat',
+  initialConfig,
   onSubmit,
   onExit,
   themeName = 'auto',
@@ -54,8 +56,8 @@ export function App({
   );
   const [history, setHistory] = useState<string[]>(initialHistory);
   const [status] = useState<StatusInfo>({
-    model: 'none',
-    provider: 'none',
+    model: initialConfig?.model ?? 'none',
+    provider: initialConfig?.provider ?? 'none',
     sandbox: 'unknown',
     tokensIn: 0,
     tokensOut: 0,
