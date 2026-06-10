@@ -41,3 +41,20 @@ export {
   type SecretBackend,
   type CreateOpts,
 } from './config/secrets.js';
+
+export {
+  PROVIDERS,
+  getProvider,
+} from './llm/providers/index.js';
+
+export type {
+  ProviderModule,
+  ProviderUI,
+  AuthField,
+  ModelInfo,
+  ValidationResult,
+} from './llm/providers/types.js';
+
+export { createLlmProviderField } from './llm/llm-provider-field.js';
+export { runOnboarding, type RunOnboardingOpts } from './llm/onboard.js';
+export { appendTurn, readLog, redactSecrets, type Turn } from './session/log.js';
