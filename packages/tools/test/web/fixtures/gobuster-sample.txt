@@ -1,0 +1,20 @@
+===============================================================
+Gobuster v3.6
+by OJ Reeves (@TheColonial) & Christian Mehlmauer (@firefart)
+===============================================================
+[+] Url:                     https://example.com
+[+] Method:                  GET
+[+] Threads:                 10
+[+] Wordlist:                /usr/share/wordlists/dirb/common.txt
+[+] Negative Status codes:   404
+[+] User Agent:              gobuster/3.6
+[+] Timeout:                 10s
+===============================================================
+/admin                [Status: 200, Words: 12, Lines: 30]
+/login                [Status: 200, Words: 5, Lines: 10]
+/uploads              [Status: 301, Words: 0, Lines: 0]
+/api                  [Status: 403, Words: 9, Lines: 22]
+/wp-admin             [Status: 200, Words: 8, Lines: 25]
+===============================================================
+2025/12/25 00:00:00 Finished
+===============================================================
