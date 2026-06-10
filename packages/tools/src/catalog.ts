@@ -8,8 +8,7 @@ import { niktoTool } from './web/nikto';
 import { gobusterTool } from './web/gobuster';
 import { ffufTool } from './web/ffuf';
 import { sqlmapTool } from './web/sqlmap';
-// evilTwinTool is added in Task 5.9
-// import { evilTwinTool } from './wifi/evil-twin';
+import { evilTwinTool } from './wifi/evil-twin';
 import type { z } from 'zod';
 
 /**
@@ -68,7 +67,11 @@ export const tools: Array<{ name: string; category: string; flags: readonly stri
     category: sqlmapTool.category,
     flags: sqlmapTool.flags,
   },
-  // { name: evilTwinTool.name, category: evilTwinTool.category, flags: evilTwinTool.flags },
+  {
+    name: evilTwinTool.name,
+    category: evilTwinTool.category,
+    flags: evilTwinTool.flags,
+  },
 ];
 
 export { shellExecTool };
@@ -83,4 +86,5 @@ export {
   ffufTool,
   sqlmapTool,
 } from './web/index.js';
+export { evilTwinTool } from './wifi/index.js';
 export type { z };

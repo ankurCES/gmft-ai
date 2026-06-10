@@ -51,6 +51,14 @@ export interface Tool<I extends z.ZodTypeAny, O extends z.ZodTypeAny> {
   /** Zod schema for the output. Must be `z.object(...)`. */
   output: O;
   flags: readonly string[];
+  /**
+   * If set, the chokepoint returns a `type-then-confirm` decision with
+   * this literal as the prompt. The TUI's <ApprovalPrompt> shows a
+   * text input that the user must type the literal into before the
+   * confirm button is enabled. Use for high-friction destructive
+   * tools (wifi attacks, network implants).
+   */
+  typeToConfirm?: string;
   run(args: z.infer<I>, ctx: ToolContext): Promise<z.infer<O>>;
 }
 
