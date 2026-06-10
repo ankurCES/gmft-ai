@@ -1,11 +1,11 @@
 /**
  * @gmft/core — agent runtime, chokepoint, tools, memory, session.
  *
- * Phase 1 ships only the surface: types, config loader, and a stub `runTurn`
- * that returns nothing. Real implementations land in phases 2+.
+ * Phase 1.5d ships the LLM streaming surface: createModel + runTurn +
+ * summarizeIfNeeded + tokenEstimate. Tools + chokepoint land in phase 3.
  */
 
-export const VERSION = '0.1.0-phase1';
+export const VERSION = '0.1.0-phase1.5d';
 
 export function version(): string {
   return VERSION;
@@ -58,3 +58,10 @@ export type {
 export { createLlmProviderField } from './llm/llm-provider-field.js';
 export { runOnboarding, type RunOnboardingOpts } from './llm/onboard.js';
 export { appendTurn, readLog, redactSecrets, type Turn } from './session/log.js';
+
+export { createModel, type CreateModelOpts } from './llm/model-factory.js';
+export { buildSystemPrompt, type PromptEnv, type PromptScope, type SandboxMode } from './llm/prompts.js';
+
+export { runTurn, type AgentEvent, type RunTurnOpts } from './agent/loop.js';
+export { tokenEstimate, totalTokens, type ChatMessage, type ChatRole } from './agent/context.js';
+export { summarizeIfNeeded, type SummarizeOpts, type SummarizeResult } from './agent/summarizer.js';
