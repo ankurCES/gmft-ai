@@ -1,0 +1,2 @@
+{"target":"https://example.com","http_status":200,"plugins":{"HTTPServer":["nginx"],"WebFramework":["Express"],"Title":["Example Domain"],"IP":["93.184.216.34"],"Country":["[UNITED STATES][:2]"],"UncommonHeaders":["x-cache"],"Via-Proxy":["1.1 varnish"]}}
+{"target":"https://example.com","http_status":200,"plugins":{"HTTPServer":["nginx"],"X-Powered-By":["Express"],"HTML5":{},"Script":["application/javascript"],"HTTPSupported":{}}}

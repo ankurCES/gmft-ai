@@ -6,5 +6,7 @@
  */
 export * from './shared/prereq';
 export * from './shared/runner';
+export * from './shared/stream';
 export * from './shell/shell-exec';
-export { tools, shellExecTool } from './catalog';
+export * from './network';
+export { tools, shellExecTool, nmapTool, dnsenumTool, theHarvesterTool, whatwebTool } from './catalog';

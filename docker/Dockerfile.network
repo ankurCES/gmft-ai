@@ -1,0 +1,39 @@
+# Recon tools image: nmap, dnsenum, theHarvester, whatweb.
+# Pinned to alpine:3.20 for reproducibility.
+FROM alpine:3.20
+
+# Install system packages.
+# bash: needed by some perl/python tools.
+# bind-tools: provides dig, nslookup, host (used by dnsenum).
+# ca-certificates: for HTTPS to crt.sh, Google, etc.
+# git: theHarvester uses git internally for some sources.
+# nmap: TCP/UDP port scanner.
+# perl: dnsenum is a Perl script.
+# python3, py3-pip: theHarvester is Python.
+# ruby: whatweb is a Ruby gem.
+RUN apk add --no-cache \
+    bash \
+    bind-tools \
+    ca-certificates \
+    git \
+    nmap \
+    perl \
+    python3 \
+    py3-pip \
+    ruby
+
+# theHarvester (Python) — installed via pip with PEP 668 override.
+RUN pip install --no-cache-dir --break-system-packages theHarvester
+
+# whatweb (Ruby gem) — requires build tools for native extensions.
+RUN apk add --no-cache ruby-dev ruby-json build-base \
+    && gem install --no-document whatweb \
+    && apk del build-base
+
+WORKDIR /work
+
+# Sanity check at build time — fails the build if any tool is missing.
+RUN nmap --version \
+    && which dnsenum \
+    && which theHarvester \
+    && whatweb --version

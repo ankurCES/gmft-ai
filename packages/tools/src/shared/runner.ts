@@ -1,6 +1,20 @@
 import { spawn } from 'node:child_process';
 import { assertBinary, isPrereqCheckSkipped } from './prereq';
 
+/**
+ * Resolve a binary name to an absolute path. Currently only handles the
+ * special case of `node` (maps to `process.execPath`) so the runner is
+ * robust to PATH-less environments (e.g. CI runners where `node` is not
+ * on the inherited PATH for child processes). All other binaries pass
+ * through unchanged and rely on PATH lookup by the OS.
+ */
+function resolveBin(bin: string): string {
+  if (bin === 'node' || bin === 'node.exe') {
+    return process.execPath;
+  }
+  return bin;
+}
+
 export type RunnerMode = 'docker' | 'host';
 
 export interface RunOptions {
@@ -125,8 +139,9 @@ function runHost(
       reject(new Error('runHost called with empty argv'));
       return;
     }
-    const [bin, ...rest] = argv;
-    const child = spawn(bin!, rest, { env, stdio: ['ignore', 'pipe', 'pipe'], shell: false });
+    const [rawBin, ...rest] = argv;
+    const bin = resolveBin(rawBin!);
+    const child = spawn(bin, rest, { env, stdio: ['ignore', 'pipe', 'pipe'], shell: false });
     let stdout = '';
     let stderr = '';
     child.stdout.on('data', (b: Buffer) => (stdout += b.toString()));
