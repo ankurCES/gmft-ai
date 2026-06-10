@@ -1,0 +1,27 @@
+*******************************************************************
+*   theHarvester 4.4.0                                            *
+*   Coded by Christian Martorella                                 *
+*   Edge-Security Research                                        *
+*   cmartorella@edge-security.com                                  *
+*******************************************************************
+
+[*] Target domain: example.com
+
+[*] Searching Google.
+
+[*] Certificates databases: crt.sh.
+
+[*] Emails found: 3
+--------------------
+info@example.com
+admin@example.com
+security@example.com
+
+[*] Hosts found: 2
+--------------------
+www.example.com:93.184.216.34
+mail.example.com:93.184.216.35
+
+[*] URLs found: 1
+--------------------
+https://example.com/login
