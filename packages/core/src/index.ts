@@ -1,11 +1,15 @@
 /**
  * @gmft/core — agent runtime, chokepoint, tools, memory, session.
  *
- * Phase 1.5d ships the LLM streaming surface: createModel + runTurn +
- * summarizeIfNeeded + tokenEstimate. Tools + chokepoint land in phase 3.
+ * Phase 1.5f ships live model + provider switching:
+ * lookupApiKey / bindGetApiKey (SecretStore-backed key resolution),
+ * getDefaultModel (provider -> model catalog), and the new
+ * AgentApp wiring that rebuilds the LanguageModel on /model and
+ * /provider. The LLM streaming surface from 1.5d is unchanged.
+ * Tools + chokepoint land in phase 3.
  */
 
-export const VERSION = '0.1.0-phase1.5d';
+export const VERSION = '0.1.0-phase1.5f';
 
 export function version(): string {
   return VERSION;
@@ -67,6 +71,8 @@ export {
 
 export { createModel, type CreateModelOpts } from './llm/model-factory.js';
 export { buildSystemPrompt, type PromptEnv, type PromptScope, type SandboxMode } from './llm/prompts.js';
+export { lookupApiKey, bindGetApiKey, type GetApiKey } from './llm/api-key.js';
+export { getDefaultModel } from './llm/model-catalog.js';
 
 export { runTurn, type AgentEvent, type RunTurnOpts } from './agent/loop.js';
 export { tokenEstimate, totalTokens, type ChatMessage, type ChatRole } from './agent/context.js';

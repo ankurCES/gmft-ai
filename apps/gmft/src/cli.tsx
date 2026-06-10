@@ -20,6 +20,7 @@ import {
   createLlmProviderField,
   runOnboarding,
   createSecretStore,
+  bindGetApiKey,
   type GmftConfig,
 } from '@gmft/core';
 import { AgentApp } from './AgentApp.js';
@@ -144,11 +145,15 @@ try {
 
 // Look up the API key for the configured provider. Openrouter/ollama
 // do not require a key (the secret may be unset for them; ollama passes
-// the literal 'ollama' through the factory).
+// the literal 'ollama' through the factory). Phase 1.5f also binds a
+// `getApiKey` closure on the same store so AgentApp can re-resolve
+// the key on `/provider` switches without re-creating the store.
 let apiKey = '';
+let getApiKey: (provider: string) => Promise<string> = async () => '';
 try {
   const store = await createSecretStore({ service: 'gmft' });
   apiKey = (await store.get(`${config.llm.provider}.apiKey`)) ?? '';
+  getApiKey = bindGetApiKey(store);
 } catch (err) {
   // Keytar probe failures are non-fatal — the TUI will show the LLM
   // error when the first turn is submitted.
@@ -182,6 +187,8 @@ const { waitUntilExit } = render(
       apiKey,
       ...(config.llm.endpoint ? { endpoint: config.llm.endpoint } : {}),
     },
+    getApiKey,
+    ...(config.llm.endpoint ? { endpoint: config.llm.endpoint } : {}),
     env: {
       hostname: host,
       os: process.platform,

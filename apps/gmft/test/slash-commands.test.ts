@@ -89,7 +89,12 @@ describe('dispatchSlash', () => {
     expect(r.reply!.content).toContain('Usage');
   });
 
-  it('/provider <id> switches provider and clears the model', async () => {
+  it('/provider <id> signals the AgentApp to switch (model slot cleared; AgentApp picks the default)', async () => {
+    // The dispatcher is pure: it tells AgentApp "switch to this
+    // provider" with an empty model slot. AgentApp then looks up a
+    // default via the model catalog (1.5f). The dispatcher itself
+    // doesn't know about defaults — that decision lives in the
+    // React layer so the test surface stays small.
     const r = await dispatchSlash('/provider openai', makeCtx());
     expect(r.kind).toBe('handled');
     expect(onSwitchModel).toHaveBeenCalledWith({ provider: 'openai', model: '' });
@@ -99,6 +104,15 @@ describe('dispatchSlash', () => {
     const r = await dispatchSlash('/provider', makeCtx());
     expect(r.kind).toBe('handled');
     expect(onSwitchModel).not.toHaveBeenCalled();
+  });
+
+  it('/provider reply mentions the default-model behavior (1.5f)', async () => {
+    // The reply text is the only user-facing signal that the model
+    // slot is empty + will be auto-filled. Keep this in sync with
+    // the dispatcher's reply.
+    const r = await dispatchSlash('/provider openai', makeCtx());
+    expect(r.kind).toBe('handled');
+    expect(r.reply?.content).toContain('default model');
   });
 
   it('/exit returns { kind: "exited" } and calls onExit', async () => {

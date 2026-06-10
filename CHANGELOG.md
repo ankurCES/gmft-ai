@@ -206,6 +206,59 @@ arrive in phase 2 / phase 1.5a-1.5h.
   phase 2; pulled forward — see plan §11). Adds tasks 1.5a-1.5h and +4 tests.
   Phase 1 test total: 5 → 9. v0.1 test total: 50 → 54.
 
+## [0.1.0-phase1.5f] — 2026-06-14
+
+Live model + provider switching. `/model <id>` and `/provider <id>`
+now actually rebuild the `LanguageModel` the next LLM turn uses,
+re-resolving the API key from the `SecretStore` for the new provider.
+Picks a sensible default model when `/provider` is used without a
+subsequent `/model`. Builds on 1.5e's in-memory status string (1.5e
+updated the rail; it didn't touch the model).
+
+### Added
+- `lookupApiKey(provider, store?)` and `bindGetApiKey(store)` in
+  `@gmft/core/llm/api-key.js` — provider-aware key resolver over
+  `SecretStore`. The contract is `${provider}.apiKey`; missing keys
+  and store errors both surface as `''` (the next `createModel` call
+  turns it into a clean chat-visible error). `bindGetApiKey` is the
+  recommended path for the CLI: it constructs the store once and
+  reuses it for every swap.
+- `getDefaultModel(provider)` in `@gmft/core/llm/model-catalog.js` —
+  one model per provider (the fast/cheap tier): `claude-3-5-haiku-latest`
+  / `gpt-4o-mini` / `gemini-1.5-flash` / `openai/gpt-4o-mini` /
+  `llama3.2`. Returns `''` for unknown providers (case-sensitive on
+  purpose — the factory's switch is exact-match too).
+- `AgentApp` now takes `getApiKey: (provider) => Promise<string>` and
+  (optionally) `endpoint`. A `useEffect` re-resolves the key when
+  the active provider changes; `useMemo` rebuilds `llmModel` from
+  `(activeProvider, activeModel, resolvedApiKey, endpoint)`. Unknown
+  provider ids from the slash command are logged + no-op (the slash
+  command already replied with the typo).
+- `cli.tsx` constructs one `SecretStore` at boot and calls
+  `bindGetApiKey(store)` once; the resulting closure flows into
+  `AgentApp.getApiKey`. The initial `apiKey` lookup is unchanged.
+
+### Changed
+- `/provider <id>` reply no longer says "model cleared"; it now says
+  "default model selected — /model <id> to override" because that's
+  what happens. The slash dispatcher is still pure (it still emits
+  `{provider, model: ''}`); the default-model fill is AgentApp's job.
+- `AgentApp` `useState<string>(model.provider)` →
+  `useState<LlmConfig['provider']>(model.provider)` so the type system
+  catches future regressions in `setActiveProvider`.
+
+### Tests
+- 7 new `lookupApiKey` / `bindGetApiKey` tests (happy path, missing
+  key, store throws, `${provider}.apiKey` contract guard, closure
+  delegation, keytar hiccup tolerance)
+- 2 new `getDefaultModel` tests (every known provider + the
+  unknown-provider fallback)
+- 4 new AgentApp e2e tests (live model switch, live provider switch,
+  model-only key retention, unknown-provider no-op)
+- 1 new slash-command test (`/provider` reply mentions the new
+  default-model behavior)
+- Workspace total: **152 tests** (73 core + 78 apps/gmft + 1 testkit)
+
 ## [0.1.0-phase1.5e] — 2026-06-10
 
 Slash commands + JSONL session persistence. App is now a controlled

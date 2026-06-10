@@ -163,13 +163,14 @@ export async function dispatchSlash(
         ),
       };
     }
-    // Provider switch clears the model — the user has to /model again.
-    // A smarter impl could pick a default model for the new provider.
+    // Provider switch clears the explicit model — AgentApp picks a
+    // sensible default from the catalog so the next turn has a real
+    // model id (1.5f). The user can override with /model <id> after.
     ctx.onSwitchModel({ provider: arg, model: '' });
     return {
       kind: 'handled',
       reply: reply(
-        `Switched provider to ${arg} (model cleared — /model <id> next).`,
+        `Switched provider to ${arg} (default model selected — /model <id> to override).`,
         'provider',
       ),
     };
