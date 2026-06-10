@@ -1,12 +1,12 @@
 import { z } from 'zod';
 import { run } from '../shared/runner';
-import type { Tool, Finding } from '@gmft/core';
+import type { Tool, ToolContext, Finding } from '@gmft/core';
 
 export const WhatwebInput = z.object({
   url: z.string().url(),
   aggression: z.number().int().min(1).max(4).default(1),
 });
-export type WhatwebInput = z.infer<typeof WhatwebInput>;
+export type WhatwebInputT = z.infer<typeof WhatwebInput>;
 
 export const WhatwebOutput = z.object({
   technologies: z.array(
@@ -20,7 +20,7 @@ export const WhatwebOutput = z.object({
   mode: z.enum(['host', 'docker']),
   fellBack: z.boolean(),
 });
-export type WhatwebOutput = z.infer<typeof WhatwebOutput>;
+export type WhatwebOutputT = z.infer<typeof WhatwebOutput>;
 
 interface Tech {
   name: string;
@@ -81,14 +81,15 @@ export function whatwebFindings(techs: Tech[], target: string): Finding[] {
   return out;
 }
 
-export const whatwebTool: Tool<WhatwebInput, WhatwebOutput> = {
+export const whatwebTool: Tool<typeof WhatwebInput, typeof WhatwebOutput> = {
   name: 'whatweb',
   category: 'recon',
   flags: ['targetRequired'],
   description: 'Web technology fingerprinting with whatweb --log-json=-. -q quiet, --no-errors, -a 1-4 aggression.',
-  inputSchema: WhatwebInput,
-  outputSchema: WhatwebOutput,
-  async run(input) {
+  input: WhatwebInput,
+  output: WhatwebOutput,
+  async run(input: WhatwebInputT, _ctx: ToolContext): Promise<WhatwebOutputT> {
+    // Apply zod defaults (aggression) before using.
     const parsed0 = WhatwebInput.parse(input);
     const r = await run({
       argv: [

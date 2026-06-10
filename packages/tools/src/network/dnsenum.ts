@@ -1,11 +1,11 @@
 import { z } from 'zod';
 import { run } from '../shared/runner';
-import type { Tool, Finding } from '@gmft/core';
+import type { Tool, ToolContext, Finding } from '@gmft/core';
 
 export const DnsenumInput = z.object({
   domain: z.string().min(1),
 });
-export type DnsenumInput = z.infer<typeof DnsenumInput>;
+export type DnsenumInputT = z.infer<typeof DnsenumInput>;
 
 export const DnsenumRecord = z.object({
   host: z.string(),
@@ -29,7 +29,7 @@ export const DnsenumOutput = z.object({
   mode: z.enum(['host', 'docker']),
   fellBack: z.boolean(),
 });
-export type DnsenumOutput = z.infer<typeof DnsenumOutput>;
+export type DnsenumOutputT = z.infer<typeof DnsenumOutput>;
 
 interface Parsed {
   records: DnsenumRecord[];
@@ -65,13 +65,13 @@ export function parseDnsenum(raw: string): Parsed {
     }
     if (section === 'hosts') {
       const m = line.match(/^(\S+)\s{2,}(\S+)/);
-      if (m) parsed.records.push({ host: m[1].replace(/\.+$/, ''), address: m[2] });
+      if (m) parsed.records.push({ host: m[1]!.replace(/\.+$/, ''), address: m[2]! });
     } else if (section === 'ns') {
       const m = line.match(/^(\S+)/);
-      if (m) parsed.nameservers.push(m[1].replace(/\.+$/, ''));
+      if (m) parsed.nameservers.push(m[1]!.replace(/\.+$/, ''));
     } else if (section === 'mx') {
       const m = line.match(/^(\S+)\s+pref=(\d+)/);
-      if (m) parsed.mx.push({ host: m[1].replace(/\.+$/, ''), pref: parseInt(m[2]!, 10) });
+      if (m) parsed.mx.push({ host: m[1]!.replace(/\.+$/, ''), pref: parseInt(m[2]!, 10) });
     }
   }
   return parsed;
@@ -120,14 +120,14 @@ export function dnsenumFindings(parsed: Parsed, target: string): Finding[] {
   return out;
 }
 
-export const dnsenumTool: Tool<DnsenumInput, DnsenumOutput> = {
+export const dnsenumTool: Tool<typeof DnsenumInput, typeof DnsenumOutput> = {
   name: 'dnsenum',
   category: 'recon',
   flags: ['targetRequired'],
   description: 'DNS enumeration with dnsenum --noreverse -o -. Outputs host addresses, nameservers, MX records.',
-  inputSchema: DnsenumInput,
-  outputSchema: DnsenumOutput,
-  async run(input) {
+  input: DnsenumInput,
+  output: DnsenumOutput,
+  async run(input: DnsenumInputT, _ctx: ToolContext): Promise<DnsenumOutputT> {
     const r = await run({
       argv: ['dnsenum', '--noreverse', '-o', '-', input.domain],
       image: 'gmft/network:0.1',

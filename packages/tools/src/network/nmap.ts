@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import { run } from '../shared/runner';
-import type { Tool } from '@gmft/core';
+import type { Tool, ToolContext } from '@gmft/core';
 
 export const NmapInput = z.object({
   target: z.string().min(1),
@@ -8,7 +8,7 @@ export const NmapInput = z.object({
   scripts: z.string().optional(),
   timing: z.number().int().min(0).max(5).default(4),
 });
-export type NmapInput = z.infer<typeof NmapInput>;
+export type NmapInputT = z.infer<typeof NmapInput>;
 
 export const NmapPort = z.object({
   port: z.number().int(),
@@ -35,7 +35,7 @@ export const NmapOutput = z.object({
   mode: z.enum(['host', 'docker']),
   fellBack: z.boolean(),
 });
-export type NmapOutput = z.infer<typeof NmapOutput>;
+export type NmapOutputT = z.infer<typeof NmapOutput>;
 
 const hostBlock = /<host\b[\s\S]*?<\/host>/g;
 const statusMatch = /<status\s+state="([^"]+)"/;
@@ -67,7 +67,7 @@ export function parseNmapXml(xml: string): NmapHost[] {
       });
     }
     hosts.push({
-      address: am[1],
+      address: am[1]!,
       hostname: hm?.[1],
       ports,
     });
@@ -99,22 +99,24 @@ export function nmapFindings(hosts: NmapHost[], target: string): Finding[] {
   return out;
 }
 
-export const nmapTool: Tool<NmapInput, NmapOutput> = {
+export const nmapTool: Tool<typeof NmapInput, typeof NmapOutput> = {
   name: 'nmap',
   category: 'recon',
   flags: ['targetRequired'],
   description: 'TCP port scan with nmap. -oX - emits XML to stdout for parsing.',
-  inputSchema: NmapInput,
-  outputSchema: NmapOutput,
-  async run(input) {
+  input: NmapInput,
+  output: NmapOutput,
+  async run(input: NmapInputT, _ctx: ToolContext): Promise<NmapOutputT> {
+    // Apply zod defaults (timing) before using.
+    const parsed0 = NmapInput.parse(input);
     const argv = [
       'nmap',
       '-oX',
       '-',
-      ...(input.ports ? ['-p', input.ports] : []),
-      ...(input.scripts ? ['--script', input.scripts] : []),
-      `-T${input.timing}`,
-      input.target,
+      ...(parsed0.ports ? ['-p', parsed0.ports] : []),
+      ...(parsed0.scripts ? ['--script', parsed0.scripts] : []),
+      `-T${parsed0.timing}`,
+      parsed0.target,
     ];
     const r = await run({
       argv,
@@ -122,7 +124,7 @@ export const nmapTool: Tool<NmapInput, NmapOutput> = {
       timeoutMs: 120_000,
     });
     const hosts = parseNmapXml(r.stdout);
-    const findings = nmapFindings(hosts, input.target);
+    const findings = nmapFindings(hosts, parsed0.target);
     return {
       xml: r.stdout,
       hosts,

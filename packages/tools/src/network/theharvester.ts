@@ -1,13 +1,13 @@
 import { z } from 'zod';
 import { run } from '../shared/runner';
-import type { Tool, Finding } from '@gmft/core';
+import type { Tool, ToolContext, Finding } from '@gmft/core';
 
 export const TheHarvesterInput = z.object({
   domain: z.string().min(1),
   sources: z.array(z.string()).default(['google']),
   limit: z.number().int().min(1).max(10000).default(100),
 });
-export type TheHarvesterInput = z.infer<typeof TheHarvesterInput>;
+export type TheHarvesterInputT = z.infer<typeof TheHarvesterInput>;
 
 export const TheHarvesterOutput = z.object({
   raw: z.string(),
@@ -24,7 +24,7 @@ export const TheHarvesterOutput = z.object({
   mode: z.enum(['host', 'docker']),
   fellBack: z.boolean(),
 });
-export type TheHarvesterOutput = z.infer<typeof TheHarvesterOutput>;
+export type TheHarvesterOutputT = z.infer<typeof TheHarvesterOutput>;
 
 interface Parsed {
   emails: string[];
@@ -62,7 +62,7 @@ export function parseTheHarvester(raw: string): Parsed {
       parsed.emails.push(line);
     } else if (section === 'hosts') {
       const m = line.match(/^([^:\s]+):(\S+)/);
-      if (m) parsed.hosts.push({ host: m[1], address: m[2] });
+      if (m) parsed.hosts.push({ host: m[1]!, address: m[2]! });
       else parsed.hosts.push({ host: line });
     } else if (section === 'urls') {
       if (line.startsWith('http://') || line.startsWith('https://')) {
@@ -116,14 +116,15 @@ export function theHarvesterFindings(parsed: Parsed, target: string): Finding[] 
   return out;
 }
 
-export const theHarvesterTool: Tool<TheHarvesterInput, TheHarvesterOutput> = {
+export const theHarvesterTool: Tool<typeof TheHarvesterInput, typeof TheHarvesterOutput> = {
   name: 'theHarvester',
   category: 'recon',
   flags: ['targetRequired'],
   description: 'OSINT email/host/URL harvesting with theHarvester. Sources joined with commas; -f - emits results to stdout for parsing.',
-  inputSchema: TheHarvesterInput,
-  outputSchema: TheHarvesterOutput,
-  async run(input) {
+  input: TheHarvesterInput,
+  output: TheHarvesterOutput,
+  async run(input: TheHarvesterInputT, _ctx: ToolContext): Promise<TheHarvesterOutputT> {
+    // Apply zod defaults (sources, limit) before using.
     const parsed0 = TheHarvesterInput.parse(input);
     const r = await run({
       argv: [
