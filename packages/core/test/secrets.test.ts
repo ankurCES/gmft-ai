@@ -28,6 +28,19 @@ describe('createSecretStore', () => {
     expect(await store.get('anthropic.apiKey')).toBe('sk-test-123');
   });
 
+  it('compositeKey preserves inner-key case (apiKey vs apikey do not collide)', async () => {
+    vi.resetModules();
+    vi.doMock('keytar', () => {
+      throw new Error('libsecret not found');
+    });
+    const { createSecretStore } = await import('../src/config/secrets.js');
+    const store = await createSecretStore({ service: 'gmft-case' });
+    await store.set('apiKey', 'first');
+    await store.set('apikey', 'second');
+    expect(await store.get('apiKey')).toBe('first');
+    expect(await store.get('apikey')).toBe('second');
+  });
+
   it('round-trips secrets via EnvFileStore and locks file mode to 0600', async () => {
     vi.resetModules();
     vi.doMock('keytar', () => {

@@ -24,7 +24,12 @@ class EnvFileStore implements SecretStore {
   constructor(private readonly service: string) {}
 
   private compositeKey(key: string): string {
-    return `${this.service.toUpperCase().replace(/[^A-Z0-9]/g, '_')}_${key.replace(/\./g, '_').toUpperCase()}`;
+    // Service prefix is uppercased + sanitized so it round-trips through
+    // a POSIX env var. The inner key is preserved (dots -> underscores)
+    // so case-sensitive provider fields don't collide: `apiKey` and
+    // `apikey` are distinct. Callers must not pass keys whose only
+    // difference is case — that's a real provider bug, not a gmft bug.
+    return `${this.service.toUpperCase().replace(/[^A-Z0-9]/g, '_')}_${key.replace(/\./g, '_')}`;
   }
 
   private readAll(): Record<string, string> {
@@ -33,7 +38,11 @@ class EnvFileStore implements SecretStore {
     const text = readFileSync(p, 'utf8');
     const out: Record<string, string> = {};
     for (const line of text.split('\n')) {
-      const m = line.match(/^([A-Z0-9_]+)\s*=\s*(.*)$/);
+      // Env-var style: uppercase letters, digits, underscores. compositeKey
+      // produces an uppercased service prefix and a case-preserved inner
+      // key (dots -> underscores) so case-sensitive provider fields
+      // (apiKey vs apikey) don't collide. Accept both shapes here.
+      const m = line.match(/^([A-Za-z0-9_]+)\s*=\s*(.*)$/);
       if (m) out[m[1]!] = m[2] ?? '';
     }
     return out;
