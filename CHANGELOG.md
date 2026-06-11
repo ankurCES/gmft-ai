@@ -77,6 +77,96 @@ contained 2 bugs/ambiguities that this slice corrected:
   top-level `rule` / `at` fields. The shipped test uses the
   real shape.
 
+## [0.2.0-D.1] — 2026-06-17
+
+First slice of v0.2.D (host-side sandbox hardening). Ships the
+D.1 primitives (D.1.1, already landed as commit d7514c2) plus
+the D.1.3 seccomp auto-apply that was explicitly deferred in
+D.1.1's commit message. The landlock auto-apply landed in D.1.1;
+this slice adds the seccomp half so the runner can now install
+*both* a filesystem LSM (landlock) AND a syscall filter (seccomp
+BPF) on the host-fallback path.
+
+### Added
+- `packages/seccomp-shim/` — new N-API shim, sibling of
+  `@gmft/landlock-shim`. Exposes 3 functions: `arch()`,
+  `prctlSetNoNewPrivs()`, `installBpf(bpfBytes, flags)`. Pure
+  C++17, no `libseccomp.so` runtime dep. Builds via `node-gyp`
+  on Linux. The BPF program is built in pure JS and passed in
+  as a `Buffer`.
+- `packages/tools/src/shared/bpf.ts` — pure-JS BPF program
+  emitter. `BpfProgram` (typed array of `{code, jt, jf, k}`
+  instructions, with `encode()` → `Buffer` for the shim),
+  `buildBpfAllowlist({arch, allowedSyscalls})` (default-deny),
+  `buildBpfDenyList({arch, deniedSyscalls})` (default-allow,
+  block dangerous syscalls), and a `nodeArchToBpfArch()`
+  mapping from `process.arch`. Exports two sample policies:
+  `ALLOWLIST_DIAGNOSTIC_SYSCALLS_X86_64` (21-syscall
+  default-deny for read-only diagnostics tools) and
+  `DENYLIST_DANGEROUS_SYSCALLS_X86_64` (deny ptrace, kexec,
+  mount, bpf, ...).
+- `packages/tools/src/shared/seccomp.ts` — `applySeccomp(opts)`
+  wires the BPF + `PR_SET_NO_NEW_PRIVS` + `seccomp(SECCOMP_SET_MODE_FILTER)`
+  for the current thread (designed to be called from a
+  `preExec` hook). Refuses to install a filter with an empty
+  allowlist (mirrors `applyLandlock`'s no-allowlist refusal).
+  The probe is now `available: true` on any Linux host
+  (previously only `strict|filter` modes were "available" —
+  but a fresh process is always mode 0 / `disabled`, so the
+  old probe would have made `applySeccomp` impossible to call).
+- `packages/tools/src/shared/runner.ts` — `RunOptions` gains
+  `seccompPolicy?: 'allowlist' | 'denylist'`. `RunResult.mode`
+  widens to include `'host+seccomp'` and `'host+landlock+seccomp'`
+  (with `seccompApplied` + `seccompPolicy` result fields). The
+  `preExec` hook now applies landlock *then* seccomp (in that
+  order — landlock touches the FS, seccomp filters syscalls;
+  the order matters because applying seccomp first would
+  block the FS syscalls landlock needs). Seccomp is opt-in:
+  callers must pass `seccompPolicy` to get it.
+- 13 tool Zod schemas (`*Output.mode` enums in
+  `packages/tools/src/{network,web,shell,wifi}/*.ts`) gain
+  `'host+seccomp'` and `'host+landlock+seccomp'`.
+
+### Tests
+- 9 new tests in `packages/seccomp-shim/test/install.test.js`:
+  5 argument-validation + 3 live-call (arch, no_new_privs,
+  get_seccomp) + 1 export shape. The shim smoke test does NOT
+  install a real filter, so it passes on a kernel without
+  seccomp too.
+- 9 new tests in `packages/tools/test/shared/bpf.test.ts`:
+  3 audit-arch + 1 BpfProgram.encode (LE byte order) + 3
+  buildBpfAllowlist (shape, default-action override, real
+  diagnostic list length) + 2 buildBpfDenyList (shape, empty
+  denylist → everything allowed). All assertions on the
+  emitted BPF byte sequence — no kernel required.
+- 5 new tests in `packages/tools/test/shared/seccomp.test.ts`:
+  2 buildSeccompBpf (default allowlist + custom lists + denylist
+  mode) + 2 applySeccomp (refuses on non-Linux, refuses empty
+  allowlist). The 3 pre-existing seccomp-probe tests are still
+  green.
+- 3 new tests in `packages/tools/test/shared/runner-host-sandbox.test.ts`:
+  the **first one actually installs a BPF filter on a real
+  child process** (sets `caps.seccomp='available'` in the
+  test seam, calls `run({seccompPolicy: 'allowlist'})`, asserts
+  the child printed `'seccomp-ok'` and exited 0). The other 2
+  cover `'host+landlock+seccomp'` mode resolution and the
+  opt-in (no seccomp when `seccompPolicy` is unset).
+- v0.2.0-D.1 total in `packages/tools`: 136 tests (was 119
+  before this slice). `packages/seccomp-shim`: 9 tests.
+  Workspace: 274 tests, 0 fails.
+
+### Plan deviations
+The plan (`docs/superpowers/plans/2026-06-17-gmft-v0.2-D-host-sandbox.md`)
+said seccomp auto-apply was "v0.3 stretch — see ADR-0011" and
+this slice ships it in v0.2.D.1 instead. The rationale: the
+BPF emitter turned out to be ~200 lines of pure data
+(constructors + an encoder), and the shim was ~200 lines of
+C++ mirroring `@gmft/landlock-shim`. Together they're well
+under a day's work and close a real security gap the
+host-fallback path exposes. ADR-0011 still needs to be
+written (D.3); this slice ships the code, ADR-0011 will
+document the policy.
+
 ## [0.2.0-A.2] — 2026-06-12
 
 Second slice of v0.2.A (multi-agent supervisor). Ships the
