@@ -229,4 +229,107 @@ describe('dispatchSlash', () => {
     expect(r.reply!.content).toContain('Unknown command');
     expect(r.reply!.content).toContain('/foobar');
   });
+
+  // ───── /report ────────────────────────────────────────────────
+  describe('/report', () => {
+    it('returns a "not wired" reply when runReport is absent', async () => {
+      const r = await dispatchSlash('/report md', makeCtx());
+      expect(r.kind).toBe('handled');
+      if (r.kind !== 'handled') throw new Error('narrow');
+      expect(r.reply!.content).toMatch(/not wired|not available/i);
+    });
+
+    it('default format is md; passes through to runReport', async () => {
+      const runReport = vi.fn().mockResolvedValue({
+        path: '/tmp/x.md',
+        format: 'md',
+        findingCount: 3,
+        bytesWritten: 512,
+      });
+      const r = await dispatchSlash('/report', makeCtx({ runReport }));
+      expect(r.kind).toBe('handled');
+      if (r.kind !== 'handled') throw new Error('narrow');
+      expect(runReport).toHaveBeenCalledWith({ format: 'md', outputPath: undefined });
+      expect(r.reply!.content).toContain('/tmp/x.md');
+      expect(r.reply!.content).toContain('md');
+      expect(r.reply!.content).toContain('3');
+    });
+
+    it('honors explicit format + path (json, pdf)', async () => {
+      const runReport = vi.fn().mockResolvedValue({
+        path: '/tmp/x.json',
+        format: 'json',
+        findingCount: 1,
+        bytesWritten: 100,
+      });
+      const r = await dispatchSlash('/report json /tmp/x.json', makeCtx({ runReport }));
+      if (r.kind !== 'handled') throw new Error('narrow');
+      expect(runReport).toHaveBeenCalledWith({ format: 'json', outputPath: '/tmp/x.json' });
+      expect(r.reply!.content).toContain('/tmp/x.json');
+    });
+
+    it('accepts "markdown" as an alias for "md"', async () => {
+      const runReport = vi.fn().mockResolvedValue({
+        path: '/tmp/y.md',
+        format: 'md',
+        findingCount: 0,
+        bytesWritten: 0,
+      });
+      const r = await dispatchSlash('/report markdown', makeCtx({ runReport }));
+      if (r.kind !== 'handled') throw new Error('narrow');
+      expect(runReport).toHaveBeenCalledWith({ format: 'md', outputPath: undefined });
+    });
+
+    it('rejects unknown format with a usage reply', async () => {
+      const runReport = vi.fn();
+      const r = await dispatchSlash('/report html', makeCtx({ runReport }));
+      if (r.kind !== 'handled') throw new Error('narrow');
+      expect(runReport).not.toHaveBeenCalled();
+      expect(r.reply!.content).toContain('Usage: /report');
+      expect(r.reply!.content).toContain('html');
+    });
+
+    it('for PDF, also calls openFile and mentions it in the reply', async () => {
+      const runReport = vi.fn().mockResolvedValue({
+        path: '/tmp/z.pdf',
+        format: 'pdf',
+        findingCount: 2,
+        bytesWritten: 4096,
+      });
+      const openFile = vi.fn().mockResolvedValue(undefined);
+      const r = await dispatchSlash('/report pdf', makeCtx({ runReport, openFile }));
+      if (r.kind !== 'handled') throw new Error('narrow');
+      expect(openFile).toHaveBeenCalledWith('/tmp/z.pdf');
+      expect(r.reply!.content).toContain('opened in default viewer');
+    });
+
+    it('PDF: openFile failure surfaces in the reply (does not throw)', async () => {
+      const runReport = vi.fn().mockResolvedValue({
+        path: '/tmp/z.pdf',
+        format: 'pdf',
+        findingCount: 2,
+        bytesWritten: 4096,
+      });
+      const openFile = vi.fn().mockRejectedValue(new Error('xdg-open: command not found'));
+      const r = await dispatchSlash('/report pdf', makeCtx({ runReport, openFile }));
+      if (r.kind !== 'handled') throw new Error('narrow');
+      expect(r.reply!.content).toContain('open failed');
+      expect(r.reply!.content).toContain('xdg-open');
+    });
+
+    it('runReport failure surfaces as a friendly error reply', async () => {
+      const runReport = vi.fn().mockRejectedValue(new Error('No findings yet.'));
+      const r = await dispatchSlash('/report md', makeCtx({ runReport }));
+      if (r.kind !== 'handled') throw new Error('narrow');
+      expect(r.reply!.content).toContain('Report failed');
+      expect(r.reply!.content).toContain('No findings yet.');
+    });
+
+    it('help text mentions /report', async () => {
+      const r = await dispatchSlash('/help', makeCtx());
+      if (r.kind !== 'handled') throw new Error('narrow');
+      expect(r.reply!.content).toContain('/report');
+      expect(r.reply!.content).toContain('md|json|pdf');
+    });
+  });
 });

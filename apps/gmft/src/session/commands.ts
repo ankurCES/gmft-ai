@@ -8,7 +8,7 @@
  * and returns a structured `SlashResult`. App.tsx calls it inside
  * `handleSubmit`.
  *
- * Commands (phase 1.5e):
+ * Commands (phase 1.5e + phase 6):
  *   /help                       — show help
  *   /clear                      — clear chat messages
  *   /model <id>                 — switch model in-memory (no LLM call)
@@ -19,6 +19,7 @@
  *   /session load <id>          — load + replay a session into chat
  *   /session clear              — clear current pointer (logs kept on disk)
  *   /resume                     — alias for /session load current
+ *   /report [md|json|pdf] [path] — generate a report from current session findings
  *
  * Anything starting with `/` that we don't recognize is a `handled:error`
  * — we never forward unknown slash input to the LLM.
@@ -26,6 +27,22 @@
 
 import type { Message as Msg } from '../ui/components/Message.js';
 import type { SessionInfo, SessionStore } from './store.js';
+
+export type ReportFormat = 'md' | 'json' | 'pdf';
+
+export interface RunReportOpts {
+  format: ReportFormat;
+  outputPath?: string;
+  severityFilter?: 'info' | 'low' | 'medium' | 'high' | 'critical';
+  includeEvidence?: boolean;
+}
+
+export interface RunReportResult {
+  path: string;
+  format: ReportFormat;
+  findingCount: number;
+  bytesWritten: number;
+}
 
 export type SlashResult =
   | { kind: 'sent' } // not a slash command — caller forwards to LLM
@@ -75,10 +92,24 @@ export interface SlashContext {
    * tests can assert the path.
    */
   onExit: () => void;
+  /**
+   * Run a report tool against the current session's findings. Wired
+   * in by `AgentApp` so the slash command stays pure-ish (it doesn't
+   * import `@gmft/tools` directly). If absent, `/report` returns a
+   * friendly "report tool unavailable" reply.
+   */
+  runReport?: (opts: RunReportOpts) => Promise<RunReportResult>;
+  /**
+   * Open a file in the OS's default handler. Used by `/report pdf`
+   * so the operator can preview without leaving the TUI. If absent,
+   * the reply still shows the path — the operator can open it
+   * manually. Best-effort: errors are surfaced as a reply.
+   */
+  openFile?: (path: string) => Promise<void>;
 }
 
 export const HELP_TEXT =
-  'Commands (phase 1.5e):\n' +
+  'Commands:\n' +
   '  /help                       show this help\n' +
   '  /clear                      clear chat (log kept on disk)\n' +
   '  /model <id>                 switch model in-memory\n' +
@@ -87,6 +118,9 @@ export const HELP_TEXT =
   '  /session list               list sessions on disk\n' +
   '  /session load <id>          load a session and replay turns\n' +
   '  /session clear              clear current pointer (logs kept)\n' +
+  '  /resume                     alias for /session load <current>\n' +
+  '  /report [md|json|pdf] [path]\n' +
+  '                             write a report (default: md). pdf also opens it.\n' +
   '  /exit                       exit (alias for Ctrl-C)';
 
 /**
@@ -196,6 +230,10 @@ export async function dispatchSlash(
     return await loadSession(currentId, ctx, reply);
   }
 
+  if (cmd === '/report') {
+    return await handleReport(arg, rest, ctx, reply);
+  }
+
   // Unknown command — never forward.
   return {
     kind: 'handled',
@@ -293,4 +331,75 @@ function formatSessionLine(s: SessionInfo): string {
   const mark = s.current ? '*' : ' ';
   const when = new Date(s.mtimeMs).toISOString().replace('T', ' ').slice(0, 19);
   return `  ${mark} ${s.id}  (${s.turns} turn${s.turns === 1 ? '' : 's'}, modified ${when})`;
+}
+
+/**
+ * /report [md|json|pdf] [path]
+ *
+ * Default format is `md`. Optional `path` overrides the default
+ * report path (it must land under the reports dir, enforced by the
+ * underlying tool).
+ *
+ * For PDF, we additionally call `ctx.openFile(path)` if provided so
+ * the operator gets a preview in the OS default viewer. We don't
+ * fail the command if `xdg-open` is missing — the reply still shows
+ * the path.
+ */
+async function handleReport(
+  fmtArg: string | undefined,
+  pathArg: string,
+  ctx: SlashContext,
+  reply: (content: string, idSuffix: string) => Msg,
+): Promise<SlashResult> {
+  if (!ctx.runReport) {
+    return {
+      kind: 'handled',
+      reply: reply(
+        'Report tool is not wired into this build of gmft.',
+        'report-noop',
+      ),
+    };
+  }
+  // Parse format. Empty/unknown falls back to 'md' with a hint.
+  const fmtRaw = (fmtArg ?? 'md').toLowerCase();
+  let format: ReportFormat;
+  if (fmtRaw === 'md' || fmtRaw === 'markdown') {
+    format = 'md';
+  } else if (fmtRaw === 'json') {
+    format = 'json';
+  } else if (fmtRaw === 'pdf') {
+    format = 'pdf';
+  } else {
+    return {
+      kind: 'handled',
+      reply: reply(
+        `Usage: /report [md|json|pdf] [path]  (got format "${fmtRaw}")`,
+        'report-usage',
+      ),
+    };
+  }
+  try {
+    const result = await ctx.runReport({
+      format,
+      outputPath: pathArg || undefined,
+    });
+    let body =
+      `Report written: ${result.path}\n` +
+      `Format: ${result.format} · Findings: ${result.findingCount} · ` +
+      `Bytes: ${result.bytesWritten}`;
+    if (format === 'pdf' && ctx.openFile) {
+      try {
+        await ctx.openFile(result.path);
+        body += '\n(opened in default viewer)';
+      } catch (e) {
+        body += `\n(open failed: ${(e as Error).message})`;
+      }
+    }
+    return { kind: 'handled', reply: reply(body, 'report') };
+  } catch (e) {
+    return {
+      kind: 'handled',
+      reply: reply(`Report failed: ${(e as Error).message}`, 'report-error'),
+    };
+  }
 }
