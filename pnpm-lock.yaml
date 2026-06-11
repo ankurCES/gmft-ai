@@ -144,6 +144,19 @@ importers:
         specifier: ^5.5.4
         version: 5.9.3
 
+  packages/seccomp-shim:
+    dependencies:
+      node-addon-api:
+        specifier: ^8.0.0
+        version: 8.8.0
+    devDependencies:
+      node-gyp:
+        specifier: ^10.0.0
+        version: 10.3.1
+      typescript:
+        specifier: ^5.5.4
+        version: 5.9.3
+
   packages/testkit:
     devDependencies:
       typescript:
@@ -161,6 +174,9 @@ importers:
       '@gmft/landlock-shim':
         specifier: workspace:*
         version: link:../landlock-shim
+      '@gmft/seccomp-shim':
+        specifier: workspace:*
+        version: link:../seccomp-shim
       '@react-pdf/renderer':
         specifier: ^4.5.1
         version: 4.5.1(react@18.3.1)

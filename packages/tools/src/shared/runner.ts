@@ -1,6 +1,7 @@
 import { spawn } from 'node:child_process';
 import { assertBinary, isPrereqCheckSkipped } from './prereq';
 import { applyLandlock } from './landlock.js';
+import { applySeccomp, type SeccompPolicyKind } from './seccomp.js';
 import { runnerCapabilities } from './capabilities.js';
 import type { LandlockApplyOpts } from './landlock.js';
 
@@ -18,7 +19,7 @@ function resolveBin(bin: string): string {
   return bin;
 }
 
-export type RunnerMode = 'docker' | 'host' | 'host+landlock';
+export type RunnerMode = 'docker' | 'host' | 'host+landlock' | 'host+seccomp' | 'host+landlock+seccomp';
 
 export interface RunOptions {
   /** Args to exec, e.g. ['echo', 'hello']. */
@@ -44,6 +45,14 @@ export interface RunOptions {
   fsAllowWrite?: string[];
   /** Filesystem paths the child may CREATE regular files in. See fsAllowRead. */
   fsAllowMakeReg?: string[];
+  /**
+   * When set, the child runs under a seccomp BPF filter (in addition
+   * to landlock if that's also available). The default policy is
+   * 'allowlist' (default-deny). Tools with a wide syscall surface
+   * should set this to 'denylist' or pass an explicit allowedSyscalls.
+   * Ignored on non-Linux or when seccomp is not available.
+   */
+  seccompPolicy?: SeccompPolicyKind;
 }
 
 export interface RunResult {
@@ -54,12 +63,16 @@ export interface RunResult {
   durationMs: number;
   /** True if the runner fell back from docker to host. */
   fellBack: boolean;
-  /** True if landlock was applied for this run (host+landlock mode). */
+  /** True if landlock was applied for this run (host+landlock* modes). */
   sandboxed?: boolean;
   /** Landlock ABI version (1-7) when sandboxed. Undefined otherwise. */
   landlockAbi?: number;
   /** Resolved allowlist that was enforced. Undefined when not sandboxed. */
   landlockPaths?: { read: string[]; write: string[]; makeReg: string[] };
+  /** True if seccomp was applied for this run (host+*+seccomp modes). */
+  seccompApplied?: boolean;
+  /** The seccomp policy that was applied. Undefined if not applied. */
+  seccompPolicy?: SeccompPolicyKind;
 }
 
 const DEFAULT_IMAGE = process.env.GMFT_RUNNER_IMAGE ?? 'alpine:3.20';
@@ -105,14 +118,19 @@ export async function run(opts: RunOptions): Promise<RunResult> {
   if (mode === 'docker') {
     return runDocker(opts.argv, opts.image ?? DEFAULT_IMAGE, opts.cwd, env, timeoutMs, fellBack, start);
   }
-  // Host mode: decide whether to apply landlock. Landlock is only
-  // applied when:
-  //   - the host's landlock probe reports `available`, AND
-  //   - the caller passed at least one fs allowlist (an empty
-  //     allowlist would lock the child down entirely, blocking
-  //     its own argv/libs).
+  // Host mode: decide whether to apply landlock and/or seccomp. Each is
+  // applied independently based on capability + caller intent:
+  //   - landlock: applied iff caps.landlock === 'available' AND caller
+  //     passed at least one fs allowlist (an empty allowlist would lock
+  //     the child down entirely, blocking its own argv/libs).
+  //   - seccomp:  applied iff caps.seccomp === 'available' AND caller
+  //     passed seccompPolicy. Default policy is allowlist; callers can
+  //     override with 'denylist' for tools that need a wider surface.
+  //   The two can be combined: 'host+landlock+seccomp' is the strictest
+  //   mode (landlock controls FS, seccomp controls syscalls).
   const caps = runnerCapabilities();
   const wantsLandlock = caps.landlock === 'available' && hasAnyAllowlist(opts);
+  const wantsSeccomp = caps.seccomp === 'available' && opts.seccompPolicy !== undefined;
   return runHost(
     opts.argv,
     opts.cwd,
@@ -127,6 +145,7 @@ export async function run(opts: RunOptions): Promise<RunResult> {
           fsAllowMakeReg: opts.fsAllowMakeReg,
         }
       : null,
+    wantsSeccomp ? { policy: opts.seccompPolicy as SeccompPolicyKind } : null,
   );
 }
 
@@ -184,6 +203,7 @@ function runHost(
   fellBack: boolean,
   start: number,
   landlockOpts: LandlockApplyOpts | null,
+  seccompOpts: { policy: SeccompPolicyKind } | null,
 ): Promise<RunResult> {
   return new Promise<RunResult>((resolve, reject) => {
     if (argv.length === 0) {
@@ -193,17 +213,32 @@ function runHost(
     const [rawBin, ...rest] = argv;
     const bin = resolveBin(rawBin!);
     // preExec runs between fork() and exec() in the child — perfect place
-    // to apply landlock rules (kernel LSM, irreversible for the child).
+    // to apply landlock rules (kernel LSM, irreversible for the child) and
+    // seccomp BPF (irreversible for the child). Order matters: apply
+    // landlock first (it touches the FS, doesn't restrict syscalls), then
+    // seccomp (it restricts syscalls, so subsequent fs syscalls — like the
+    // ones landlock just made) are filtered normally). If either fails,
+    // we exit the child with 126 — there's no exec to return to.
     const preExec =
-      landlockOpts !== null
+      landlockOpts !== null || seccompOpts !== null
         ? () => {
             try {
-              applyLandlock(landlockOpts);
+              if (landlockOpts !== null) {
+                applyLandlock(landlockOpts);
+              }
             } catch (err) {
-              // Landlock apply failure is fatal for the child. Bail loudly
-              // via process.exit — there's no exec to return to.
               process.stderr.write(
                 `[gmft/tools] failed to apply landlock: ${err instanceof Error ? err.message : err}\n`,
+              );
+              process.exit(126);
+            }
+            try {
+              if (seccompOpts !== null) {
+                applySeccomp({ policy: seccompOpts.policy });
+              }
+            } catch (err) {
+              process.stderr.write(
+                `[gmft/tools] failed to apply seccomp: ${err instanceof Error ? err.message : err}\n`,
               );
               process.exit(126);
             }
@@ -230,9 +265,18 @@ function runHost(
     child.on('close', (code) => {
       clearTimeout(timer);
       const sandboxed = landlockOpts !== null;
+      const seccompApplied = seccompOpts !== null;
       const caps = sandboxed ? runnerCapabilities() : null;
+      const mode: RunnerMode =
+        sandboxed && seccompApplied
+          ? 'host+landlock+seccomp'
+          : sandboxed
+            ? 'host+landlock'
+            : seccompApplied
+              ? 'host+seccomp'
+              : 'host';
       resolve({
-        mode: sandboxed ? 'host+landlock' : 'host',
+        mode,
         stdout,
         stderr,
         exitCode: code ?? -1,
@@ -247,6 +291,8 @@ function runHost(
               makeReg: landlockOpts.fsAllowMakeReg ?? [],
             }
           : undefined,
+        seccompApplied,
+        seccompPolicy: seccompApplied ? seccompOpts!.policy : undefined,
       });
     });
   });

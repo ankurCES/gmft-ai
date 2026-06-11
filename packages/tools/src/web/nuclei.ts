@@ -13,7 +13,7 @@ export type NucleiInputT = z.infer<typeof NucleiInput>;
 
 export const NucleiOutput = z.object({
   findings: z.array(z.any()),
-  mode: z.enum(['host', 'host+landlock', 'docker']),
+  mode: z.enum(['host', 'host+landlock', 'host+seccomp', 'host+landlock+seccomp', 'docker']),
   fellBack: z.boolean(),
   durationMs: z.number(),
 });

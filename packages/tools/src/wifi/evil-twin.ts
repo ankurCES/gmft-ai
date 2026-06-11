@@ -14,7 +14,7 @@ export type EvilTwinInputT = z.infer<typeof EvilTwinInput>;
 
 export const EvilTwinOutput = z.object({
   findings: z.array(z.any()),
-  mode: z.enum(['host', 'host+landlock', 'docker']),
+  mode: z.enum(['host', 'host+landlock', 'host+seccomp', 'host+landlock+seccomp', 'docker']),
   fellBack: z.boolean(),
   durationMs: z.number(),
   fluxionArgs: z.array(z.string()),

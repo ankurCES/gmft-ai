@@ -11,7 +11,7 @@ export type GobusterInputT = z.infer<typeof GobusterInput>;
 
 export const GobusterOutput = z.object({
   findings: z.array(z.any()),
-  mode: z.enum(['host', 'host+landlock', 'docker']),
+  mode: z.enum(['host', 'host+landlock', 'host+seccomp', 'host+landlock+seccomp', 'docker']),
   fellBack: z.boolean(),
   durationMs: z.number(),
 });

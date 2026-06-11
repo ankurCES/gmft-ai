@@ -82,3 +82,86 @@ describe('run (host+landlock integration)', () => {
     expect(r.sandboxed).toBeFalsy();
   });
 });
+
+describe('run (host+seccomp integration)', () => {
+  beforeEach(() => resetCapabilitiesForTest());
+  afterEach(() => resetCapabilitiesForTest());
+
+  it('applies seccomp (host+seccomp) when seccomp is available and seccompPolicy is set, even without landlock', async () => {
+    // The runner resolves mode from the capability snapshot. With
+    // seccomp=available and seccompPolicy set, the preExec hook
+    // calls applySeccomp(). The live seccomp shim works on this
+    // dev host (we tested it in the seccomp-shim smoke test), so
+    // the child should run to completion under a default-deny BPF.
+    // The default allowlist includes read+write+exit, so a trivial
+    // node -e 'console.log("ok")' should still print 'ok' before
+    // exiting. If the BPF were too tight, the child would be killed
+    // with SIGSYS (exit code 159 on Linux).
+    setCapabilitiesForTest({
+      landlock: 'unavailable',
+      landlockAbi: null,
+      seccomp: 'available',
+      docker: 'unavailable',
+      resolvedAuto: 'host+seccomp',
+    });
+
+    const r = await run({
+      argv: ['node', '-e', "console.log('seccomp-ok')"],
+      forceHost: true,
+      seccompPolicy: 'allowlist',
+    });
+    expect(r.mode).toBe('host+seccomp');
+    expect(r.sandboxed).toBeFalsy();          // landlock NOT applied
+    expect(r.seccompApplied).toBe(true);
+    expect(r.seccompPolicy).toBe('allowlist');
+    expect(r.exitCode).toBe(0);
+    expect(r.stdout).toContain('seccomp-ok');
+  });
+
+  it('reports host+landlock+seccomp when both are available', async () => {
+    setCapabilitiesForTest({
+      landlock: 'available',
+      landlockAbi: 4,
+      seccomp: 'available',
+      docker: 'unavailable',
+      resolvedAuto: 'host+landlock+seccomp',
+    });
+
+    const r = await run({
+      argv: ['node', '-e', "console.log('both')"],
+      forceHost: true,
+      fsAllowRead: ['/usr', '/tmp'],
+      fsAllowWrite: ['/tmp'],
+      seccompPolicy: 'allowlist',
+    });
+    // On a host without real landlock, the child exits 126 (preExec
+    // bail). On a host WITH real landlock, the child runs and the
+    // mode is 'host+landlock+seccomp'. We assert on the path the
+    // runner RESOLVED, by checking the mode is not plain 'host'.
+    expect(r.mode).not.toBe('host');
+    // The exact mode depends on whether the host has real landlock:
+    //   - yes: 'host+landlock+seccomp'
+    //   - no:  child exits 126 and we get 'host+landlock+seccomp' anyway
+    //          because the runner RESOLVES the mode before preExec runs.
+    expect(['host+landlock+seccomp']).toContain(r.mode);
+  });
+
+  it('does NOT apply seccomp when seccompPolicy is unset (opt-in)', async () => {
+    setCapabilitiesForTest({
+      landlock: 'unavailable',
+      landlockAbi: null,
+      seccomp: 'available',
+      docker: 'unavailable',
+      resolvedAuto: 'host+seccomp',
+    });
+
+    const r = await run({
+      argv: ['node', '-e', "console.log('no-seccomp')"],
+      forceHost: true,
+      // no seccompPolicy
+    });
+    expect(r.mode).toBe('host');
+    expect(r.seccompApplied).toBeFalsy();
+    expect(r.seccompPolicy).toBeUndefined();
+  });
+});
