@@ -92,6 +92,29 @@ export interface Tool<I extends z.ZodTypeAny, O extends z.ZodTypeAny> {
   run(args: z.infer<I>, ctx: ToolContext): Promise<z.infer<O>>;
 }
 
+/**
+ * v0.1 phase 6 — events the `attack_chain` tool emits as it runs.
+ * The tool's `run` calls `ctx.emit(ev)` for each of its lifecycle
+ * milestones; the agent loop translates these into the 4 `chain-*`
+ * `AgentEvent` variants and yields them on the `runTurn` async
+ * iterable. The shape here is the chain tool's emission format —
+ * the loop's `AgentEvent` shape mirrors it (plus a denormalized
+ * `totalSteps` on `chain-finished` for the at-a-glance hook summary).
+ */
+export type ChainEvent =
+  | { type: 'chain-started'; chainId: string; stepCount: number }
+  | { type: 'chain-step-started'; chainId: string; stepIndex: number; tool: string; name?: string }
+  | {
+      type: 'chain-step-finished';
+      chainId: string;
+      stepIndex: number;
+      status: 'ok' | 'denied' | 'erred' | 'skipped';
+      durationMs: number;
+      findingCount: number;
+      reason?: string;
+    }
+  | { type: 'chain-finished'; chainId: string; completed: number; denied: number; erred: number };
+
 /** Per-call context the runner injects. */
 export interface ToolContext {
   cwd: string;
@@ -109,4 +132,18 @@ export interface ToolContext {
    * unchanged.
    */
   innerRunner?: InnerRunner;
+  /**
+   * v0.1 phase 6 — optional event sink. The `attack_chain` tool calls
+   * `ctx.emit(ev)` for each lifecycle milestone as it runs. The agent
+   * loop provides an emitter that buffers events and yields them as
+   * `chain-*` `AgentEvent` variants before the next SDK chunk
+   * surfaces. The buffer approach keeps event ordering deterministic
+   * (chain events interleave with `tool-result` chunks in the right
+   * place) without forcing the chain tool to know about the loop's
+   * async-iterable protocol.
+   *
+   * Tools that don't emit (most) simply ignore it. The field is
+   * optional so existing tools keep working unchanged.
+   */
+  emit?: (event: ChainEvent) => void;
 }

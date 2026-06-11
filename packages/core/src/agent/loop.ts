@@ -37,14 +37,32 @@
  * `Map<toolCallId, { decision, approved? }>` and only registering the
  * tool's `execute` in the tools record if it's pre-approved. The SDK
  * does the actual calling.
+ *
+ * v0.1 phase 6 — `runInner` is wired into the agent loop's tool path
+ * via `wrapToolsForSDK` (which now routes through `runInner` when a
+ * registry + chokepoint are provided). The chain tool needs
+ * `ctx.innerRunner` populated so its sub-steps can recurse through
+ * the chokepoint + findings pipeline, and `ctx.emit` so its lifecycle
+ * events surface as `chain-*` `AgentEvent` variants.
+ *
+ * The `chainEventBuffer` is a per-turn array the `emit` callback
+ * pushes into. The for-await loop drains the buffer at the start of
+ * each iteration (before processing the next SDK chunk), so chain
+ * events interleave correctly with `tool-call-request` /
+ * `tool-result` / `text-delta` chunks in the order the chain tool
+ * produced them. The buffer approach is simpler than making the
+ * chain tool's `run` return a nested async iterable, and keeps
+ * ordering deterministic.
  */
 
 import { streamText, type LanguageModel, type CoreMessage } from 'ai';
 import type { z } from 'zod';
 import type { ChatMessage } from './context.js';
-import type { Tool, ToolContext } from '../tools/types.js';
+import type { Tool, ToolContext, ChainEvent } from '../tools/types.js';
 import { wrapToolsForSDK } from './tool-dispatch.js';
 import type { Chokepoint, ChokepointCall, Decision } from '../chokepoint/index.js';
+import type { ToolRegistry } from '../tools/registry.js';
+import type { FindingsStore } from '../findings/store.js';
 
 // v0.1 phase 3 — extended union. The phase 2 variants are unchanged,
 // so existing tests for `text-delta` / `done` / `error` still pass.
@@ -54,13 +72,38 @@ import type { Chokepoint, ChokepointCall, Decision } from '../chokepoint/index.j
 // uses `prompt` to render a literal-typing input instead of a y/n.
 // The field is backward-compatible: tests / UI that only care about
 // y/n can ignore it.
+//
+// v0.1 phase 6 — 4 new `chain-*` variants surface the attack_chain
+// tool's per-step progress to the TUI / useAgent hook. The shape
+// mirrors the chain tool's `ChainEvent` discriminated union (see
+// `tools/types.ts`), plus a denormalized `totalSteps` on
+// `chain-finished` for the hook's at-a-glance summary.
 export type AgentEvent =
   | { type: 'text-delta'; text: string }
   | { type: 'done'; text: string }
   | { type: 'error'; error: Error }
   | { type: 'tool-call-request'; id: string; name: string; args: Record<string, unknown> }
   | { type: 'tool-result'; id: string; name: string; ok: boolean; output?: unknown; reason?: string }
-  | { type: 'confirmation-needed'; id: string; name: string; reason: string; prompt?: string };
+  | { type: 'confirmation-needed'; id: string; name: string; reason: string; prompt?: string }
+  | { type: 'chain-started'; chainId: string; stepCount: number }
+  | { type: 'chain-step-started'; chainId: string; stepIndex: number; tool: string; name?: string }
+  | {
+      type: 'chain-step-finished';
+      chainId: string;
+      stepIndex: number;
+      status: 'ok' | 'denied' | 'erred' | 'skipped';
+      durationMs: number;
+      findingCount: number;
+      reason?: string;
+    }
+  | {
+      type: 'chain-finished';
+      chainId: string;
+      totalSteps: number;
+      completed: number;
+      denied: number;
+      erred: number;
+    };
 
 export interface RunTurnOpts {
   /** Pre-built `LanguageModel` from `createModel(...)`. */
@@ -78,6 +121,13 @@ export interface RunTurnOpts {
   /** The chokepoint gate. Required iff `tools` is non-empty. */
   chokepoint?: Chokepoint;
   /**
+   * v0.1 phase 6 — tool registry. Required iff `tools` is non-empty.
+   * The agent loop uses it to resolve tool names → tools (for
+   * chokepoint metadata) and to pass into `runInner` so chain
+   * sub-steps can recurse.
+   */
+  registry?: ToolRegistry;
+  /**
    * Awaited when the chokepoint returns `confirm` or
    * `type-then-confirm`. The TUI wires this to a y/n prompt (or
    * literal-typing input when `prompt` is present); tests can stub
@@ -90,6 +140,20 @@ export interface RunTurnOpts {
   ctx?: ToolContext;
   /** Max tool-call steps. Default 5. Set to 1 to match phase 2 behavior exactly. */
   maxSteps?: number;
+  /**
+   * v0.1 phase 6 — findings store for the session. When provided,
+   * the loop's per-tool-call `runInner` passes it through so the
+   * findings sidecar is updated by every tool that emits findings,
+   * including chain sub-steps.
+   */
+  findingsStore?: FindingsStore;
+  /**
+   * v0.1 phase 6 — passed through to `runInner` for every tool call.
+   * The chain tool needs `true` here so its per-step type prompt is
+   * skipped (the chain's own `typeToConfirm: 'attack'` covers the
+   * whole chain). Plain (non-chain) tool calls use the default `false`.
+   */
+  suppressTypeToConfirm?: boolean;
 }
 
 /**
@@ -112,9 +176,75 @@ function toCoreMessages(history: readonly ChatMessage[]): CoreMessage[] {
   return out;
 }
 
+/**
+ * v0.1 phase 6 — translate a chain tool's `ChainEvent` into the
+ * loop's `chain-*` `AgentEvent` variants. The translation tracks
+ * the chain's `stepCount` (announced in `chain-started`) so the
+ * `chain-finished` variant can carry a denormalized `totalSteps`
+ * for the hook's at-a-glance summary.
+ *
+ * The buffer is mutated in place: each drained event is shifted off
+ * the front, so a slow consumer sees events in emission order and
+ * no event is yielded twice.
+ */
+function* drainChainEvents(
+  buffer: ChainEvent[],
+): Generator<Extract<AgentEvent, { type: `chain-${string}` }>> {
+  // Tracks the most recent `stepCount` from `chain-started` so we
+  // can attach it to `chain-finished`. Reset to undefined on
+  // `chain-finished` so a stale count can't leak to a later chain.
+  let currentStepCount: number | undefined;
+  while (buffer.length > 0) {
+    const ev = buffer.shift()!;
+    switch (ev.type) {
+      case 'chain-started':
+        currentStepCount = ev.stepCount;
+        yield { type: 'chain-started', chainId: ev.chainId, stepCount: ev.stepCount };
+        break;
+      case 'chain-step-started':
+        yield {
+          type: 'chain-step-started',
+          chainId: ev.chainId,
+          stepIndex: ev.stepIndex,
+          tool: ev.tool,
+          ...(ev.name !== undefined ? { name: ev.name } : {}),
+        };
+        break;
+      case 'chain-step-finished':
+        yield {
+          type: 'chain-step-finished',
+          chainId: ev.chainId,
+          stepIndex: ev.stepIndex,
+          status: ev.status,
+          durationMs: ev.durationMs,
+          findingCount: ev.findingCount,
+          ...(ev.reason !== undefined ? { reason: ev.reason } : {}),
+        };
+        break;
+      case 'chain-finished':
+        yield {
+          type: 'chain-finished',
+          chainId: ev.chainId,
+          totalSteps: currentStepCount ?? 0,
+          completed: ev.completed,
+          denied: ev.denied,
+          erred: ev.erred,
+        };
+        currentStepCount = undefined;
+        break;
+    }
+  }
+}
+
 export async function* runTurn(opts: RunTurnOpts): AsyncIterable<AgentEvent> {
   const messages = toCoreMessages(opts.history);
   const hasTools = Array.isArray(opts.tools) && opts.tools.length > 0;
+
+  // v0.1 phase 6 — buffer of chain events the chain tool emits via
+  // `ctx.emit`. Drained at the start of each chunk-iteration so chain
+  // events surface in order between SDK chunks. Cleared when the turn
+  // ends (or errors) so a stale buffer can't leak to the next turn.
+  const chainEventBuffer: ChainEvent[] = [];
 
   let toolsRecord: ReturnType<typeof wrapToolsForSDK> | undefined;
   if (hasTools) {
@@ -125,12 +255,36 @@ export async function* runTurn(opts: RunTurnOpts): AsyncIterable<AgentEvent> {
       };
       return;
     }
-    const ctx: ToolContext = opts.ctx ?? {
+    if (!opts.registry) {
+      yield {
+        type: 'error',
+        error: new Error('runTurn: tools provided without registry — refusing to run'),
+      };
+      return;
+    }
+    const baseCtx: ToolContext = opts.ctx ?? {
       cwd: process.cwd(),
       env: process.env,
       cfg: { sandbox: { mode: 'host' } },
     };
-    toolsRecord = wrapToolsForSDK(opts.tools!, ctx);
+    // v0.1 phase 6 — wrap the ctx with an `emit` that pushes to the
+    // chain-event buffer. The chain tool's `run` calls
+    // `ctx.emit(ev)` for each lifecycle milestone; we drain the
+    // buffer in the for-await loop below and yield each event as a
+    // `chain-*` `AgentEvent`. The buffer is captured by closure so
+    // each turn has its own.
+    const ctx: ToolContext = {
+      ...baseCtx,
+      emit: (ev: ChainEvent) => {
+        chainEventBuffer.push(ev);
+      },
+    };
+    toolsRecord = wrapToolsForSDK(opts.tools!, ctx, opts.registry, opts.chokepoint, {
+      ...(opts.findingsStore ? { findingsStore: opts.findingsStore } : {}),
+      ...(opts.suppressTypeToConfirm !== undefined
+        ? { suppressTypeToConfirm: opts.suppressTypeToConfirm }
+        : {}),
+    });
   }
 
   // Per-call chokepoint decisions, keyed by toolCallId. Populated when
@@ -206,6 +360,17 @@ export async function* runTurn(opts: RunTurnOpts): AsyncIterable<AgentEvent> {
     });
     for await (const chunk of result.fullStream) {
       if (opts.signal?.aborted) break;
+
+      // v0.1 phase 6 — drain any chain events the chain tool's
+      // `execute` pushed via `ctx.emit` since the last iteration.
+      // The events fire *during* the SDK's `execute` invocation
+      // (i.e. between the `tool-call` chunk and the `tool-result`
+      // chunk), so they end up in the buffer before the next chunk
+      // surfaces. Draining here surfaces them in the right position
+      // in the event stream.
+      for (const ev of drainChainEvents(chainEventBuffer)) {
+        yield ev;
+      }
 
       if (chunk.type === 'text-delta') {
         fullText += chunk.textDelta;

@@ -170,6 +170,11 @@ export async function runInner(
   //    findingsStore, so a chain tool can orchestrate sub-steps.
   //    We do NOT include `innerRunner` in the closure's identity to
   //    avoid unbounded recursion if a tool tries to call itself.
+  //    The `emit` field is forwarded unchanged — a chain tool's
+  //    sub-step runner doesn't emit chain events itself (only the
+  //    outer chain run does), but we still forward so a child tool
+  //    that emits its own non-chain lifecycle events (future) would
+  //    work without re-wiring.
   const innerRunner = ((
     subTool: string,
     subArgs: Record<string, unknown>,
@@ -181,7 +186,11 @@ export async function runInner(
         ? { suppressTypeToConfirm: subOpts.suppressTypeToConfirm }
         : {}),
     })) as ToolContext['innerRunner'];
-  const childCtx: ToolContext = { ...ctx, innerRunner };
+  const childCtx: ToolContext = {
+    ...ctx,
+    innerRunner,
+    ...(ctx.emit ? { emit: ctx.emit } : {}),
+  };
 
   // 4. Run the tool. The `as never` is safe because the registry
   //    enforced `output instanceof z.ZodObject` and we just validated
