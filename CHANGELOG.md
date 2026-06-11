@@ -4,6 +4,79 @@ All notable changes to GMFT-AI are documented here.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning: [Semantic](https://semver.org/).
 
+## [0.2.0-A.3] — 2026-06-12
+
+Final slice of v0.2.A (multi-agent supervisor). Ships the
+end-of-turn postmortem (trigger 6), the session-log schema
+migration (`schemaVersion: 1` → `2`), the TUI surface for fires
+(StatusRail field, inline ⚠ markers, postmortem card), and
+secret-redaction on supervisor field bodies. The A.1+A.2 work
+landed the 3 rule engines and the `withSupervisor` wrapper.
+
+### Added
+- `packages/core/src/agent/supervisor-postmortem.ts` — fixed
+  4-section LLM call (WHAT WE TRIED / LEARNED / MISSING / NEXT
+  STEP). 10s timeout via `Promise.race` over `generateText`.
+  Never throws — a failed/timed-out call returns the empty
+  string and the card renders a placeholder. A turn with 0
+  fires returns the "quiet turn" fallback without making an
+  LLM call.
+- `packages/core/src/agent/supervisor.ts` — `withSupervisor`
+  now invokes the postmortem generator on `done` and `error`,
+  yields a `supervisor-postmortem` event, and exposes
+  `wrapped.lastFires()` / `wrapped.lastPostmortem()`.
+- `packages/core/src/session/log.ts` — `SessionRecord` gains
+  `schemaVersion: 1 | 2`; `TurnRecord` gains optional
+  `supervisor?: SupervisorTurnRecord`. v0.1 logs load with
+  `supervisor: undefined` and `schemaVersion: 1` (or absent);
+  v0.2 writes `schemaVersion: 2` with the supervisor field.
+  Secret redaction now scrubs `supervisor.fires[].quote` and
+  `supervisor.postmortem`.
+- `apps/gmft/src/ui/components/StatusRail.tsx` — Supervisor
+  field with 3 states (quiet / fires / postmortem). The pure
+  helper `renderSupervisorField` is the public seam tested
+  directly; the JSX wrapper is exercised through app-e2e.
+- `apps/gmft/src/ui/components/SupervisorFireMarker.tsx` —
+  inline ⚠ marker line keyed on the fire's `targetEventId`.
+  Maps the `kind` discriminant (loop-detected / overclaim /
+  plan-issue) to a short `rule a/b/c` label. Optional
+  `showTargetId` flag for debug builds.
+- `apps/gmft/src/ui/components/SupervisorPostmortemCard.tsx` —
+  collapsible postmortem card (cyan border, `(N fires)` label,
+  visual `[+]`/`[-]` toggle). The keyboard handler for the
+  toggle lives in `AgentApp.tsx`; the component itself only
+  renders the current `collapsed` state. Empty body is
+  handled with a `(no postmortem — generator error)` placeholder.
+
+### Tests
+- 22 new tests in A.3: 5 postmortem + 3 wrapper integration +
+  5 schema migration (4 in `session-log.test.ts`, 1 in
+  `session-store.test.ts` to keep the existing assertions
+  consistent with the new field) + 3 StatusRail +
+  3 SupervisorPostmortemCard + 3 SupervisorFireMarker.
+- v0.2.0-A.3 total: 428 (374 baseline + 54 new across
+  A.1+A.2+A.3). The 1-test delta vs the plan's "53" is the
+  schema-migration regression test added to `session-store.test.ts`
+  to cover the new `schemaVersion: 2` field.
+- `pnpm -r test` green. `pnpm -r typecheck` green. `pnpm -r build` green.
+
+### Plan deviations
+The plan documented in `docs/superpowers/plans/2026-06-11-gmft-v0.2-A-supervisor.md`
+contained 2 bugs/ambiguities that this slice corrected:
+- Task 3.5's example `Transcript.tsx` doesn't exist in the v0.1
+  app. Events stream into `AgentApp` and the supervisor-fire
+  events were unrendered in v0.2.A.2. Shipped
+  `SupervisorFireMarker` as the smallest renderable unit
+  (one marker line per fire) and noted the AgentApp-level
+  wiring (deciding which messages get a marker) as separate
+  follow-up work.
+- Task 3.5's example test referenced the wrong `SupervisorFire`
+  shape (`rule: 'A' | 'B' | 'C'` with an `at: number` field).
+  The actual type is a discriminated union on `kind`
+  (loop-detected / overclaim / plan-issue) and has no
+  top-level `rule` / `at` fields. The shipped test uses the
+  real shape.
+
 ## [0.2.0-A.2] — 2026-06-12
 
 Second slice of v0.2.A (multi-agent supervisor). Ships the
