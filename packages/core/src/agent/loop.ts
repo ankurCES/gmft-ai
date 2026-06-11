@@ -85,6 +85,8 @@ export type AgentEvent =
   | { type: 'tool-call-request'; id: string; name: string; args: Record<string, unknown>; flags?: readonly string[] } // v0.2.A — `flags` is added for the supervisor's Rule C (destructive / targetRequired). Source of truth is the tool registry; loop emits flags when the chokepoint knows them (A.2 Task 2.4).
   | { type: 'tool-result'; id: string; name: string; ok: boolean; output?: unknown; reason?: string }
   | { type: 'confirmation-needed'; id: string; name: string; reason: string; prompt?: string }
+  | { type: 'supervisor-fire'; fire: import('./supervisor-types.js').SupervisorFire; targetEventId: string } // v0.2.A.2 — the supervisor wrapper yields this AFTER the triggering event. The TUI renders the ⚠ marker keyed on `targetEventId`.
+  | { type: 'supervisor-postmortem'; body: string; turnId: string; fireCount: number } // v0.2.A.3 — postmortem generator lands later; declared now so the AgentEvent union is closed.
   | { type: 'chain-started'; chainId: string; stepCount: number }
   | { type: 'chain-step-started'; chainId: string; stepIndex: number; tool: string; name?: string }
   | {
@@ -416,7 +418,21 @@ export async function* runTurn(opts: RunTurnOpts): AsyncIterable<AgentEvent> {
         })();
 
         // Always emit the request event (so the TUI shows the LLM's intent).
-        yield { type: 'tool-call-request', id: toolCallId, name: toolName, args };
+        // v0.2.A.2 Task 2.4: pass tool flags through from the registry.
+        // `tool` is `Tool | undefined` here (line 393) — undefined means
+        // the chokepoint returned a deny (unknown tool), and we still
+        // want to yield the event. We spread conditionally on
+        // `length > 0` (not just truthiness) because an empty
+        // `readonly string[]` IS truthy in JS, and the event's
+        // `flags?: readonly string[]` field is meaningful only when
+        // the tool actually declares flags.
+        yield {
+          type: 'tool-call-request',
+          id: toolCallId,
+          name: toolName,
+          args,
+          ...(tool?.flags && tool.flags.length > 0 ? { flags: tool.flags } : {}),
+        };
 
         if (decision.kind === 'deny') {
           // Short-circuit: emit a tool-result and skip the SDK's execute.
