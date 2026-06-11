@@ -125,10 +125,13 @@ const COMPLETE_PHRASE = /(scan|recon|port[- ]?scan|enum(eration)?)\s+(is\s+)?(co
 
 // Sub-rule B.2: claim-without-evidence (within 2 tool calls of empty result)
 const CLAIM_PHRASE = /\b(complete|done|finished|no vulnerabilities|nothing found)\b/i;
-const EMPTY_OUTPUT_REGEX = /^(\[\s*\]|null|''|"")?$/; // [], '', null, "", etc.
 
 function isEmptyOutput(output: unknown): boolean {
-  if (output == null) return true; // null, undefined
+  // Empty = null/undefined, '', empty array, or empty plain object.
+  // Primitives like 0, false, or any non-empty string are treated as non-empty
+  // (a tool returning a primitive is unusual; we don't want to over-fire on
+  // false-but-meaningful values).
+  if (output == null) return true;
   if (output === '') return true;
   if (Array.isArray(output)) return output.length === 0;
   if (typeof output === 'object') return Object.keys(output as object).length === 0;
@@ -190,9 +193,13 @@ export function observeRuleB(
     }
 
     // Sub-rule B.1: empty-findings claim
-    // Suppressed if the most recent tool call produced a non-empty result
-    // (the agent has evidence; the "no findings" conclusion is premature
-    // only when the agent has *nothing* to point at).
+    // The spec requires only `sessionFindings.length === 0`, but the plan's
+    // test 4 expects B.1 to *not* fire when a non-empty tool result was just
+    // observed (the agent has evidence, even if no findings.jsonl entry yet).
+    // This gate is a v0.2 false-positive control: target-agnostic (per the
+    // v0.3 stretch note in the plan §1.2), but defensible because the B.1
+    // diagnosis ("no findings on disk") is only premature when the agent
+    // has nothing to point at.
     if (COMPLETE_PHRASE.test(text) && sessionFindings.length === 0 && !lastResultIsNonEmpty) {
       const fire: OverclaimFire = {
         kind: 'overclaim',
