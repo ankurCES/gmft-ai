@@ -89,6 +89,17 @@ export interface Tool<I extends z.ZodTypeAny, O extends z.ZodTypeAny> {
    * tools (wifi attacks, network implants).
    */
   typeToConfirm?: string;
+  /**
+   * v0.1 phase 6 — opt-in flag that says "this tool accepts a path
+   * to a targets file in `args.target`, and the executor's
+   * `executeWithScope` should fan it out across the file's lines."
+   *
+   * When false (the default) the tool only accepts a single target
+   * in `args.target` and rejects a path-shaped target. The chokepoint
+   * doesn't read this flag — it's a tool-side contract that
+   * `executeWithScope` consults before fanning out.
+   */
+  targetsFromFile?: boolean;
   run(args: z.infer<I>, ctx: ToolContext): Promise<z.infer<O>>;
 }
 

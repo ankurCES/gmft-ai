@@ -79,4 +79,11 @@ describe('nmapTool', () => {
       }),
     );
   });
+
+  // v0.1 phase 6 — D.4 wires nmap into scope mode. The flag
+  // gates the executor's `executeWithScope` (refuses to fan out
+  // tools that haven't opted in) so we pin it down here.
+  it('declares targetsFromFile: true so executeWithScope can fan it out', () => {
+    expect(nmapTool.targetsFromFile).toBe(true);
+  });
 });

@@ -33,6 +33,7 @@ import type { ToolContext } from './types.js';
 import type { Chokepoint, ChokepointCall, Decision } from '../chokepoint/index.js';
 import type { FindingsStore } from '../findings/store.js';
 import type { Finding } from '../findings/index.js';
+import { readTargetsFile } from './targets-file.js';
 
 export interface ExecuteCall {
   name: string;
@@ -258,4 +259,136 @@ function extractFindings(output: unknown): readonly Finding[] | undefined {
   const findings = (output as { findings?: unknown }).findings;
   if (!Array.isArray(findings) || findings.length === 0) return undefined;
   return findings as readonly Finding[];
+}
+
+/**
+ * Result of a scope-mode execution. The caller (chain tool, CLI,
+ * agent loop) gets back the per-target `results` plus a rolled-up
+ * counter (ok / denied / erred / total) for at-a-glance UI.
+ */
+export interface ScopeResult {
+  results: ExecuteResult[];
+  total: number;
+  ok: number;
+  denied: number;
+  erred: number;
+}
+
+/**
+ * Run a `targetsFromFile: true` tool across a list of targets read
+ * from `filePath`. The flow:
+ *
+ *   1. Tool must declare `targetsFromFile: true`. If not, throw —
+ *      a scope-mode run on a non-scope tool would silently fan out
+ *      without the user opting in, which is a security surprise.
+ *   2. Read the file (caps: 1 MB / 10k lines; throws on overflow).
+ *   3. Do a single chokepoint call for the *scope* with `target =
+ *      <filePath>`. We strip the `targetRequired` flag for this
+ *      call so the chokepoint's target format check doesn't reject
+ *      the file path — the per-target calls below all carry real
+ *      targets and re-check. Destructive + typeToConfirm +
+ *      requiresElevation all still fire here, so a one-time
+ *      confirmation is surfaced (and audit-logged) once for the
+ *      whole scope, not once per target.
+ *   4. Run the tool sequentially per target. Each per-target call
+ *      is a fresh `runInner` with the *full* flags restored, so
+ *      `targetRequired` fires normally on each line.
+ *   5. Aggregate. Findings from each per-target call are persisted
+ *      to the sidecar by `runInner` (when `findingsStore` is set
+ *      in `opts`) — we don't double-write here.
+ */
+export async function executeWithScope(
+  tool: string,
+  baseArgs: Record<string, unknown>,
+  filePath: string,
+  registry: ToolRegistry,
+  chokepoint: Chokepoint,
+  ctx: ToolContext,
+  opts: RunInnerOpts = {},
+): Promise<ScopeResult> {
+  const entry = registry.get(tool);
+  if (!entry) {
+    throw new Error(`unknown tool "${tool}"`);
+  }
+  if (!entry.targetsFromFile) {
+    throw new Error(
+      `tool "${tool}" does not declare targetsFromFile: true; refusing to fan out across scope file`,
+    );
+  }
+
+  // Read the scope file. The reader throws on size/line overflows;
+  // we let that propagate so the caller sees the underlying cause
+  // (no tool calls have been issued at this point).
+  const targets = await readTargetsFile(filePath);
+
+  // Scope-level chokepoint call. We strip `targetRequired` so the
+  // file path doesn't trip the format check, but keep everything
+  // else (destructive, typeToConfirm, requiresElevation). The
+  // chokepoint's `checkDestructive` / `checkElevation` /
+  // `checkTypeToConfirm` rules don't look at the target value, so
+  // they all still fire here.
+  const scopeCall: ChokepointCall = {
+    tool: entry.name,
+    category: entry.category,
+    flags: entry.flags.filter((f) => f !== 'targetRequired'),
+    args: { ...baseArgs, target: filePath },
+    ...(opts.suppressTypeToConfirm ? {} : { typeToConfirm: entry.typeToConfirm }),
+  };
+  const scopeDecision = chokepoint.decide(scopeCall);
+  if (scopeDecision.kind === 'deny') {
+    return {
+      results: [],
+      total: targets.length,
+      ok: 0,
+      denied: targets.length,
+      erred: 0,
+    };
+  }
+  if (scopeDecision.kind === 'confirm' || scopeDecision.kind === 'type-then-confirm') {
+    if (!opts.onConfirmation) {
+      return {
+        results: [],
+        total: targets.length,
+        ok: 0,
+        denied: targets.length,
+        erred: 0,
+      };
+    }
+    const approved = await opts.onConfirmation(
+      { name: tool, args: { ...baseArgs, target: filePath } },
+      scopeDecision,
+    );
+    if (!approved) {
+      return {
+        results: [],
+        total: targets.length,
+        ok: 0,
+        denied: targets.length,
+        erred: 0,
+      };
+    }
+  }
+
+  // Per-target fan-out. Sequential so a denial in the middle
+  // doesn't sneak past an audit log, and so the user can see
+  // per-target progress in the TUI. Findings from each call are
+  // appended to the sidecar by `runInner` (when `findingsStore` is
+  // set in `opts`).
+  const results: ExecuteResult[] = [];
+  for (const target of targets) {
+    const perTargetArgs: Record<string, unknown> = { ...baseArgs, target };
+    // eslint-disable-next-line no-await-in-loop -- sequential by design
+    const r = await runInner(tool, perTargetArgs, registry, chokepoint, ctx, opts);
+    results.push(r);
+  }
+
+  let ok = 0;
+  let denied = 0;
+  let erred = 0;
+  for (const r of results) {
+    if (r.ok) ok++;
+    else if (r.denied) denied++;
+    else erred++;
+  }
+  return { results, total: targets.length, ok, denied, erred };
 }

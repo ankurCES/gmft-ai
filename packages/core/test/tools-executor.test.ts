@@ -10,11 +10,11 @@
 
 import { describe, it, expect, vi } from 'vitest';
 import { z } from 'zod';
-import { mkdtempSync, rmSync, existsSync, readFileSync } from 'node:fs';
+import { mkdtempSync, rmSync, existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { ToolRegistry, type Tool } from '../src/tools/index.js';
-import { execute, runInner, type ExecuteCall } from '../src/tools/executor.js';
+import { execute, runInner, executeWithScope, type ExecuteCall } from '../src/tools/executor.js';
 import { FindingsStore } from '../src/findings/store.js';
 import type { Chokepoint, ChokepointCall, Decision } from '../src/chokepoint/index.js';
 import type { Finding } from '../src/findings/index.js';
@@ -31,6 +31,17 @@ const echo: Tool<typeof echoInput, typeof echoOutput> = {
   flags: [],
   async run({ text }) { return { echoed: text }; },
 };
+
+// A nmap-shaped input for the scope tests. The executor's
+// per-target fan-out does `args = { ...baseArgs, target }`, so the
+// input schema must accept `target` (and any other args the tool
+// expects).
+const nmapInput = z.object({
+  target: z.string(),
+  ports: z.string().optional(),
+  flags: z.array(z.string()).optional(),
+});
+const nmapOutput = z.object({ scanned: z.string() });
 
 function fakeChokepoint(decision: Decision): Chokepoint {
   return { decide: (_call: ChokepointCall): Decision => decision };
@@ -292,6 +303,165 @@ describe('runInner', () => {
       const parsed = JSON.parse(lines[0]!) as { id: string; tool: string };
       expect(parsed.id).toBe('f-example.com-1');
       expect(parsed.tool).toBe('find-something');
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+/**
+ * `executeWithScope` — multi-target scope-mode fan-out.
+ *
+ * The plan promises 3 tests. We add 4: happy path, mid-loop deny,
+ * file too large, and the "tool not opted-in" guard (a `targetsFromFile
+ * !== true` tool must throw rather than fan out silently — that's a
+ * security surprise the design doc explicitly forbids).
+ */
+describe('executeWithScope', () => {
+  it('fans the tool out across 3 targets and aggregates the result counts', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'gmft-scope-'));
+    try {
+      const file = join(dir, 'targets.txt');
+      writeFileSync(file, '10.0.0.1\n10.0.0.2\n10.0.0.3\n');
+      const nmapLike: Tool<typeof nmapInput, typeof nmapOutput> = {
+        name: 'nmap',
+        category: 'recon',
+        description: 'mock nmap',
+        input: nmapInput,
+        output: nmapOutput,
+        flags: ['targetRequired'],
+        targetsFromFile: true,
+        async run({ target }) { return { scanned: target }; },
+      };
+      const r = new ToolRegistry();
+      r.register(nmapLike);
+      const chokepoint: Chokepoint = { decide: () => ({ kind: 'allow' as const }) };
+      const result = await executeWithScope(
+        'nmap',
+        { ports: '22,80' },
+        file,
+        r,
+        chokepoint,
+        baseCtx,
+      );
+      expect(result.total).toBe(3);
+      expect(result.ok).toBe(3);
+      expect(result.denied).toBe(0);
+      expect(result.erred).toBe(0);
+      expect(result.results).toHaveLength(3);
+      for (let i = 0; i < result.results.length; i++) {
+        const r = result.results[i]!;
+        expect(r.ok).toBe(true);
+        if (r.ok) {
+          // Per-target fan-out replaces the `target` field with the
+          // line value; the rest of `baseArgs` (ports) is preserved.
+          expect((r.output as { scanned: string }).scanned).toBe(`10.0.0.${i + 1}`);
+        }
+      }
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('marks the matching per-target result as denied when one target is on the denylist', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'gmft-scope-'));
+    try {
+      const file = join(dir, 'targets.txt');
+      writeFileSync(file, '10.0.0.1\n10.0.0.2\n10.0.0.3\n');
+      const nmapLike: Tool<typeof nmapInput, typeof nmapOutput> = {
+        name: 'nmap',
+        category: 'recon',
+        description: 'mock nmap',
+        input: nmapInput,
+        output: nmapOutput,
+        flags: ['targetRequired'],
+        targetsFromFile: true,
+        async run({ target }) { return { scanned: target }; },
+      };
+      const r = new ToolRegistry();
+      r.register(nmapLike);
+      // Mid-loop deny: the denylist includes the second target.
+      const chokepoint: Chokepoint = {
+        decide: (call: ChokepointCall): Decision => {
+          if (call.args.target === '10.0.0.2') {
+            return { kind: 'deny', reason: 'target "10.0.0.2" is on the chokepoint denylist' };
+          }
+          return { kind: 'allow' };
+        },
+      };
+      const result = await executeWithScope(
+        'nmap',
+        {},
+        file,
+        r,
+        chokepoint,
+        baseCtx,
+      );
+      expect(result.total).toBe(3);
+      expect(result.ok).toBe(2);
+      expect(result.denied).toBe(1);
+      expect(result.erred).toBe(0);
+      const deniedResult = result.results[1]!;
+      expect(deniedResult.ok).toBe(false);
+      expect(deniedResult.denied).toBe(true);
+      expect(deniedResult.reason).toMatch(/denylist/i);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('throws before any tool runs when the targets file is too large', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'gmft-scope-'));
+    try {
+      const file = join(dir, 'huge.txt');
+      const line = '10.0.0.1\n';
+      const reps = Math.ceil((1.5 * 1024 * 1024) / line.length);
+      writeFileSync(file, line.repeat(reps));
+      const nmapLike: Tool<typeof nmapInput, typeof nmapOutput> = {
+        name: 'nmap',
+        category: 'recon',
+        description: 'mock nmap',
+        input: nmapInput,
+        output: nmapOutput,
+        flags: ['targetRequired'],
+        targetsFromFile: true,
+        run: vi.fn(async ({ target }) => ({ scanned: target })),
+      };
+      const r = new ToolRegistry();
+      r.register(nmapLike);
+      const chokepoint: Chokepoint = { decide: () => ({ kind: 'allow' as const }) };
+      await expect(
+        executeWithScope('nmap', {}, file, r, chokepoint, baseCtx),
+      ).rejects.toThrow(/too large/i);
+      // No tool calls were issued — the cap is a precondition, not
+      // a per-target check.
+      expect(nmapLike.run).not.toHaveBeenCalled();
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('refuses to fan out a tool that has not opted in to scope mode', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'gmft-scope-'));
+    try {
+      const file = join(dir, 'targets.txt');
+      writeFileSync(file, '10.0.0.1\n');
+      const echoNoScope: Tool<typeof echoInput, typeof echoOutput> = {
+        name: 'echo',
+        category: 'note',
+        description: 'echo without scope',
+        input: echoInput,
+        output: echoOutput,
+        flags: [],
+        // targetsFromFile intentionally NOT set.
+        async run({ text }) { return { echoed: text }; },
+      };
+      const r = new ToolRegistry();
+      r.register(echoNoScope);
+      const chokepoint: Chokepoint = { decide: () => ({ kind: 'allow' as const }) };
+      await expect(
+        executeWithScope('echo', {}, file, r, chokepoint, baseCtx),
+      ).rejects.toThrow(/does not declare targetsFromFile/i);
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }

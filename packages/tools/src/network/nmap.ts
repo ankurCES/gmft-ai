@@ -103,6 +103,13 @@ export const nmapTool: Tool<typeof NmapInput, typeof NmapOutput> = {
   name: 'nmap',
   category: 'recon',
   flags: ['targetRequired'],
+  // v0.1 phase 6 — opt in to scope-mode fan-out. The agent can
+  // pass `args.target` as a path to a targets file and the executor
+  // will clone the args per line and replace `target` with each
+  // line. Without this flag, `executeWithScope('nmap', ...)` would
+  // throw (the safety guard that prevents silent scope fan-out on
+  // a tool that didn't ask for it).
+  targetsFromFile: true,
   description: 'TCP port scan with nmap. -oX - emits XML to stdout for parsing.',
   input: NmapInput,
   output: NmapOutput,
