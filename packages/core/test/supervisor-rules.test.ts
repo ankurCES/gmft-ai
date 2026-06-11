@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { observeRuleA, observeRuleB, RULE_A_THRESHOLD, RULE_A_WINDOW } from '../src/agent/supervisor-rules.js';
+import { observeRuleA, observeRuleB, observeRuleC, RULE_A_THRESHOLD, RULE_A_WINDOW } from '../src/agent/supervisor-rules.js';
 import { createInitialState } from '../src/agent/supervisor-types.js';
 import type { AgentEvent } from '../src/agent/loop.js';
 
@@ -205,6 +205,81 @@ describe('observeRuleB — confidence calibration', () => {
       textDelta('The scan is complete. Found CVE-2024-1234 on /admin.'),
       [],
     );
+    expect(r.fire).toBeUndefined();
+  });
+});
+
+describe('observeRuleC — plan quality', () => {
+  it('fires on no-recon-before-destructive (destructive after 1+ tools, 0 recon)', () => {
+    let state = createInitialState();
+    // First tool: a non-recon-class tool (http_get — not in the recon set)
+    state = observeRuleC(state, toolCall('1', 'http_get', { url: 'https://h/' })).state;
+    // Second tool: destructive (e.g. nuclei_run with destructive flag)
+    const r = observeRuleC(state, {
+      type: 'tool-call-request',
+      id: '2',
+      name: 'nuclei_run',
+      args: { target: 'h' },
+      flags: ['destructive'],
+    } as unknown as AgentEvent);
+    expect(r.fire?.kind).toBe('plan-issue');
+    expect(r.fire?.text).toMatch(/destructive tool without any prior recon/);
+  });
+
+  it('does NOT fire on no-recon-before-destructive if recon was already done', () => {
+    let state = createInitialState();
+    // First: a whois (recon)
+    state = observeRuleC(state, toolCall('1', 'whois', { target: 'h' })).state;
+    // Second: a destructive tool
+    const r = observeRuleC(state, {
+      type: 'tool-call-request',
+      id: '2',
+      name: 'nuclei_run',
+      args: { target: 'h' },
+      flags: ['destructive'],
+    } as unknown as AgentEvent);
+    expect(r.fire).toBeUndefined();
+  });
+
+  it('fires on 3+ calls to the same tool family in a single turn', () => {
+    let state = createInitialState();
+    // 3 different nmap_* calls
+    state = observeRuleC(state, toolCall('1', 'nmap_scan', { target: 'h', ports: '22' })).state;
+    state = observeRuleC(state, toolCall('2', 'nmap_service', { target: 'h' })).state;
+    const r = observeRuleC(state, toolCall('3', 'nmap_vuln', { target: 'h' }));
+    expect(r.fire?.kind).toBe('plan-issue');
+    expect(r.fire?.text).toMatch(/3\+? different `nmap_\*` calls/);
+  });
+
+  it('does NOT fire on 2 calls to the same tool family', () => {
+    let state = createInitialState();
+    state = observeRuleC(state, toolCall('1', 'nmap_scan', { target: 'h' })).state;
+    const r = observeRuleC(state, toolCall('2', 'nmap_service', { target: 'h' }));
+    expect(r.fire).toBeUndefined();
+  });
+
+  it('fires on targetRequired tool with no --target set', () => {
+    let state = createInitialState(); // no chokepointSessionTarget
+    const r = observeRuleC(state, {
+      type: 'tool-call-request',
+      id: '1',
+      name: 'nuclei_run',
+      args: { target: 'h' },
+      flags: ['targetRequired'],
+    } as unknown as AgentEvent);
+    expect(r.fire?.kind).toBe('plan-issue');
+    expect(r.fire?.text).toMatch(/--target/);
+  });
+
+  it('does NOT fire on targetRequired tool when --target is set', () => {
+    let state = createInitialState('scanme.nmap.org');
+    const r = observeRuleC(state, {
+      type: 'tool-call-request',
+      id: '1',
+      name: 'nuclei_run',
+      args: { target: 'scanme.nmap.org' },
+      flags: ['targetRequired'],
+    } as unknown as AgentEvent);
     expect(r.fire).toBeUndefined();
   });
 });

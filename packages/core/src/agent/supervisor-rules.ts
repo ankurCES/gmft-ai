@@ -27,7 +27,7 @@
 // is keyed on the tool-family prefix (nmap_*, whois/dig, etc.).
 
 import type { AgentEvent } from './loop.js';
-import type { SupervisorState, LoopDetectedFire, OverclaimFire } from './supervisor-types.js';
+import type { SupervisorState, LoopDetectedFire, OverclaimFire, PlanIssueFire } from './supervisor-types.js';
 
 export const RULE_A_THRESHOLD = 4;
 export const RULE_A_WINDOW = 8;
@@ -260,4 +260,116 @@ export function observeRuleB(
   }
 
   return { state };
+}
+
+// =============================================================================
+// Rule C — Plan quality
+// =============================================================================
+//
+// Fires on three plan-quality sub-rules during a single turn:
+//   C.1 — destructive tool called with 0 prior recon calls in the turn
+//   C.2 — 3+ calls to the same tool family (e.g. 3 different `nmap_*` calls)
+//   C.3 — `targetRequired` tool called without a session `--target`
+//
+// Recon classification is by name match against RECON_TOOL_NAMES; destructive
+// + targetRequired classification is by the `flags` field on the event (added
+// to the `tool-call-request` union in v0.2.A; the registry is the source of
+// truth at runtime). The `familyCallCounts` map on ruleC tracks per-family
+// call counts across the turn for C.2.
+
+// Recon-class tool names (the supervisor's notion; the registry's
+// `flags: ['destructive']` is the source of truth at runtime — this
+// list is the heuristic for "no recon yet" when flags aren't passed).
+const RECON_TOOL_NAMES = new Set([
+  'whois', 'dig', 'nmap_scan', 'nmap_service', 'nmap_vuln',
+  'theharvester_scan', 'dnsenum_scan', 'whatweb_scan',
+]);
+
+function toolFamily(name: string): string {
+  // "nmap_scan" -> "nmap_", "evil_twin" -> "evil_", "shell_exec" -> "shell_"
+  const idx = name.indexOf('_');
+  return idx === -1 ? name : name.slice(0, idx + 1);
+}
+
+export function observeRuleC(
+  state: SupervisorState,
+  event: AgentEvent,
+): { state: SupervisorState; fire?: PlanIssueFire } {
+  if (event.type !== 'tool-call-request') {
+    return { state };
+  }
+
+  // After the early return, TypeScript narrows `event` to the
+  // `tool-call-request` variant. The cast widens it to read the
+  // optional `flags` field; `name` and `id` are non-optional on the
+  // variant and read through normally.
+  const { name, id } = event;
+  const flags = (event as { flags?: readonly string[] }).flags;
+  const isDestructive = flags?.includes('destructive') ?? false;
+  const isRecon = RECON_TOOL_NAMES.has(name);
+  const isTargetRequired = flags?.includes('targetRequired') ?? false;
+
+  // Compute updated state first so all sub-rules can read post-call counters.
+  const family = toolFamily(name);
+  const familyCallCounts = new Map(state.ruleC.familyCallCounts);
+  familyCallCounts.set(family, (familyCallCounts.get(family) ?? 0) + 1);
+
+  const next: SupervisorState = {
+    ...state,
+    ruleC: {
+      ...state.ruleC,
+      toolsCalledThisTurn: state.ruleC.toolsCalledThisTurn + 1,
+      destructiveCallsThisTurn:
+        state.ruleC.destructiveCallsThisTurn + (isDestructive ? 1 : 0),
+      reconCallsThisTurn: state.ruleC.reconCallsThisTurn + (isRecon ? 1 : 0),
+      distinctToolFamiliesThisTurn: new Set([
+        ...state.ruleC.distinctToolFamiliesThisTurn,
+        family,
+      ]),
+      familyCallCounts,
+    },
+  };
+
+  // Sub-rule C.1: no recon, going destructive
+  if (
+    isDestructive &&
+    state.ruleC.reconCallsThisTurn === 0 &&
+    state.ruleC.toolsCalledThisTurn > 0 // the destructive call counts; need at least 1 prior tool to flag
+  ) {
+    const fire: PlanIssueFire = {
+      kind: 'plan-issue',
+      severity: 'warn',
+      text: 'destructive tool without any prior recon',
+      advice: `Supervisor: you're about to run a destructive tool without any prior recon. Consider \`nmap_scan\` or \`whois\` first.`,
+      targetEventId: id,
+    };
+    return { state: next, fire };
+  }
+
+  // Sub-rule C.2: 3+ calls to the same tool family
+  const familyCalls = next.ruleC.familyCallCounts.get(family) ?? 0;
+  if (familyCalls >= 3) {
+    const fire: PlanIssueFire = {
+      kind: 'plan-issue',
+      severity: 'info',
+      text: `3+ different \`${family}*\` calls in one turn`,
+      advice: `Supervisor: 3 different \`${family}*\` calls in one turn. Consider a single comprehensive scan instead.`,
+      targetEventId: id,
+    };
+    return { state: next, fire };
+  }
+
+  // Sub-rule C.3: targetRequired + no session target
+  if (isTargetRequired && !state.ruleC.chokepointSessionTarget) {
+    const fire: PlanIssueFire = {
+      kind: 'plan-issue',
+      severity: 'warn',
+      text: 'targetRequired tool called without --target set',
+      advice: `Supervisor: this tool requires a target scope; consider \`gmft --target <host>\` to bind the session.`,
+      targetEventId: id,
+    };
+    return { state: next, fire };
+  }
+
+  return { state: next };
 }
