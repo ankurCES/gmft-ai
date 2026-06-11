@@ -77,6 +77,8 @@ export type SupervisorState = {
   ruleB: {
     recentText: string; // concatenated from last 20 text-delta chunks
     toolCallsSinceLastClaim: number;
+    lastScannedPorts?: number[]; // populated from nmap_* tool results, used by B.3
+    lastToolResult?: { ok: boolean; output: unknown }; // most recent tool-result, used by B.1 suppression + B.2
   };
 
   // Rule C: turn-level counters

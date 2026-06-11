@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { observeRuleA, RULE_A_THRESHOLD, RULE_A_WINDOW } from '../src/agent/supervisor-rules.js';
+import { observeRuleA, observeRuleB, RULE_A_THRESHOLD, RULE_A_WINDOW } from '../src/agent/supervisor-rules.js';
 import { createInitialState } from '../src/agent/supervisor-types.js';
 import type { AgentEvent } from '../src/agent/loop.js';
 
@@ -108,5 +108,103 @@ describe('observeRuleA — stuck/loop detection', () => {
         expect(r.fire.advice).toContain('Supervisor:');
       }
     }
+  });
+});
+
+const textDelta = (text: string): AgentEvent => ({
+  type: 'text-delta',
+  text,
+});
+
+const toolResult = (id: string, output: unknown): AgentEvent => ({
+  type: 'tool-result',
+  id,
+  name: 'nmap_scan',
+  ok: true,
+  output,
+});
+
+describe('observeRuleB — confidence calibration', () => {
+  it('fires on empty-findings claim (agent says "scan complete" with no findings)', () => {
+    let state = createInitialState();
+    const sessionFindings: Array<{ target: string }> = []; // empty
+    const r = observeRuleB(
+      state,
+      textDelta('The port scan is complete.'),
+      sessionFindings,
+    );
+    expect(r.fire?.kind).toBe('overclaim');
+    expect(r.fire?.evidence).toMatch(/no findings/);
+  });
+
+  it('does NOT fire when a finding exists for the target', () => {
+    let state = createInitialState();
+    const sessionFindings = [{ target: 'scanme.nmap.org' }];
+    // The claim must reference a specific target; if findings exist for
+    // the claimed target, no fire. (Rule B does not parse the target out
+    // of the text — that's a v0.3 stretch. For v0.2, any non-empty
+    // findings array suppresses the empty-findings sub-rule.)
+    const r = observeRuleB(
+      state,
+      textDelta('The port scan is complete.'),
+      sessionFindings,
+    );
+    expect(r.fire).toBeUndefined();
+  });
+
+  it('fires on claim-without-evidence (claim within 2 tool calls of empty result)', () => {
+    let state = createInitialState();
+    // Step 1: tool returns empty
+    let r1 = observeRuleB(state, toolResult('1', []), []);
+    state = r1.state;
+    // Step 2: agent claims "complete" within 2 tool calls
+    let r2 = observeRuleB(state, textDelta('The scan is done, no vulnerabilities found.'), []);
+    expect(r2.fire?.kind).toBe('overclaim');
+    expect(r2.fire?.evidence).toMatch(/empty result/);
+  });
+
+  it('does NOT fire on claim-without-evidence when the tool result was non-empty', () => {
+    let state = createInitialState();
+    let r1 = observeRuleB(state, toolResult('1', { ports: [22, 80, 443] }), []);
+    state = r1.state;
+    let r2 = observeRuleB(state, textDelta('The scan is done.'), []);
+    expect(r2.fire).toBeUndefined();
+  });
+
+  it('fires on negative-result overconfidence (port not in scan range)', () => {
+    let state = createInitialState();
+    // Tool scanned ports 22, 80, 443
+    let r1 = observeRuleB(
+      state,
+      toolResult('1', { scanned: [22, 80, 443], results: { 22: 'open', 80: 'open' } }),
+      [],
+    );
+    state = r1.state;
+    // Agent claims port 8080 is closed — but 8080 wasn't in the scan range
+    let r2 = observeRuleB(state, textDelta('Port 8080 is closed.'), []);
+    expect(r2.fire?.kind).toBe('overclaim');
+    expect(r2.fire?.evidence).toMatch(/not in the scan range/);
+  });
+
+  it('does NOT fire on negative-result overconfidence when the port IS in the scan range', () => {
+    let state = createInitialState();
+    let r1 = observeRuleB(
+      state,
+      toolResult('1', { scanned: [22, 80, 443, 8080], results: { 22: 'open' } }),
+      [],
+    );
+    state = r1.state;
+    let r2 = observeRuleB(state, textDelta('Port 8080 is closed.'), []);
+    expect(r2.fire).toBeUndefined();
+  });
+
+  it('does NOT fire when the claim names a specific finding (CVE, port, path)', () => {
+    let state = createInitialState();
+    const r = observeRuleB(
+      state,
+      textDelta('The scan is complete. Found CVE-2024-1234 on /admin.'),
+      [],
+    );
+    expect(r.fire).toBeUndefined();
   });
 });

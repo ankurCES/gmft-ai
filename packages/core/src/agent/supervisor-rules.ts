@@ -27,7 +27,7 @@
 // is keyed on the tool-family prefix (nmap_*, whois/dig, etc.).
 
 import type { AgentEvent } from './loop.js';
-import type { SupervisorState, LoopDetectedFire } from './supervisor-types.js';
+import type { SupervisorState, LoopDetectedFire, OverclaimFire } from './supervisor-types.js';
 
 export const RULE_A_THRESHOLD = 4;
 export const RULE_A_WINDOW = 8;
@@ -98,4 +98,159 @@ export function observeRuleA(
   };
 
   return { state: nextState, fire };
+}
+
+// =============================================================================
+// Rule B — Confidence calibration (overclaim detection)
+// =============================================================================
+//
+// Three sub-rules fire `overclaim` events when the agent's text-delta
+// output is not supported by recent tool results:
+//   B.1: empty-findings claim — "scan complete" but no findings written
+//   B.2: claim-without-evidence — "complete/done" within 2 tool calls
+//        of an empty result
+//   B.3: negative-result overconfidence — "port N is closed" but N
+//        wasn't in the scan range
+//
+// The function maintains a small per-turn state slice on `state.ruleB`
+// (sliding text window + tool-call counter + last-seen scan ports).
+
+// Minimal shape we need from the session findings sidecar. The real
+// `Finding` type lives in `apps/gmft/src/session/findings.ts`; we
+// accept a structural type to keep @gmft/core dependency-free.
+type FindingLikeForRuleB = { target?: string };
+
+// Sub-rule B.1: empty-findings claim
+const COMPLETE_PHRASE = /(scan|recon|port[- ]?scan|enum(eration)?)\s+(is\s+)?(complete|done|finished)/i;
+
+// Sub-rule B.2: claim-without-evidence (within 2 tool calls of empty result)
+const CLAIM_PHRASE = /\b(complete|done|finished|no vulnerabilities|nothing found)\b/i;
+const EMPTY_OUTPUT_REGEX = /^(\[\s*\]|null|''|"")?$/; // [], '', null, "", etc.
+
+function isEmptyOutput(output: unknown): boolean {
+  if (output == null) return true; // null, undefined
+  if (output === '') return true;
+  if (Array.isArray(output)) return output.length === 0;
+  if (typeof output === 'object') return Object.keys(output as object).length === 0;
+  return false;
+}
+
+// Sub-rule B.3: negative-result overconfidence
+const CLOSED_PORT_PHRASE = /port\s+(\d+)\s+is\s+closed/i;
+
+export function observeRuleB(
+  state: SupervisorState,
+  event: AgentEvent,
+  sessionFindings: readonly FindingLikeForRuleB[],
+): { state: SupervisorState; fire?: OverclaimFire } {
+  if (event.type === 'text-delta') {
+    const text = event.text;
+    // Sliding window of last 20 text-delta chunks
+    const newRecentText = (state.ruleB.recentText + ' ' + text).slice(-2000);
+    const nextState: SupervisorState = {
+      ...state,
+      ruleB: {
+        recentText: newRecentText,
+        toolCallsSinceLastClaim: state.ruleB.toolCallsSinceLastClaim + 1,
+      },
+    };
+
+    // False-positive control: a "complete" claim within 1 turn of a
+    // specific finding (CVE-, port-on-path, etc.) is not a fire.
+    // We check the last 500 chars of recentText for a finding marker.
+    const last500 = newRecentText.slice(-500);
+    if (/CVE-\d{4}-\d+|on \/[a-z]|port \d+ on|admin|api\/v\d/i.test(last500)) {
+      return { state: nextState };
+    }
+
+    // Track the most recent tool result for B.1 suppression + B.2.
+    const lastToolResult = state.ruleB.lastToolResult;
+    const lastResultIsNonEmpty = !!lastToolResult && !isEmptyOutput(lastToolResult.output);
+
+    // Sub-rule B.2: claim-without-evidence (claim within 2 tool calls of empty result)
+    // toolCallsSinceLastClaim is incremented above; tool-result resets it to 0.
+    // So after an immediate tool-result → text-delta the counter is 1, meaning
+    // the text-delta is within 2 tool calls of the last result. <= 2 covers that.
+    // B.2 fires *before* B.1 — it is the more specific diagnosis (a tool just
+    // returned empty, and the agent is claiming completion regardless).
+    if (
+      CLAIM_PHRASE.test(text) &&
+      lastToolResult &&
+      isEmptyOutput(lastToolResult.output) &&
+      state.ruleB.toolCallsSinceLastClaim <= 2
+    ) {
+      const fire: OverclaimFire = {
+        kind: 'overclaim',
+        quote: text,
+        evidence: 'the most recent tool call returned an empty result — the claim has no supporting evidence',
+        advice: `Supervisor: you said "${text}", but the most recent tool call returned an empty result. Re-run a tool that produces output, or qualify your claim.`,
+        targetEventId: 'text-delta',
+      };
+      return { state: nextState, fire };
+    }
+
+    // Sub-rule B.1: empty-findings claim
+    // Suppressed if the most recent tool call produced a non-empty result
+    // (the agent has evidence; the "no findings" conclusion is premature
+    // only when the agent has *nothing* to point at).
+    if (COMPLETE_PHRASE.test(text) && sessionFindings.length === 0 && !lastResultIsNonEmpty) {
+      const fire: OverclaimFire = {
+        kind: 'overclaim',
+        quote: text,
+        evidence: 'no findings were written to disk for the target of the claimed scan',
+        advice: `Supervisor: you said the scan is complete, but no findings were written to disk. Re-run a tool that produces findings, or qualify your claim.`,
+        targetEventId: 'text-delta', // text-delta events don't have ids in v0.1; use a sentinel
+      };
+      return { state: nextState, fire };
+    }
+
+    // Sub-rule B.3: negative-result overconfidence
+    const m = CLOSED_PORT_PHRASE.exec(text);
+    if (m) {
+      const claimedPort = parseInt(m[1]!, 10);
+      const scannedPorts = state.ruleB.lastScannedPorts;
+      if (scannedPorts && scannedPorts.length > 0 && !scannedPorts.includes(claimedPort)) {
+        const fire: OverclaimFire = {
+          kind: 'overclaim',
+          quote: text,
+          evidence: `port ${claimedPort} was not in the scan range (${scannedPorts.join(', ')})`,
+          advice: `Supervisor: you said port ${claimedPort} is closed, but it wasn't in the scan range — port state is unknown, not closed.`,
+          targetEventId: 'text-delta',
+        };
+        return { state: nextState, fire };
+      }
+    }
+
+    return { state: nextState };
+  }
+
+  if (event.type === 'tool-result') {
+    const nextState: SupervisorState = {
+      ...state,
+      ruleB: {
+        ...state.ruleB,
+        toolCallsSinceLastClaim: 0,
+        lastToolResult: { ok: event.ok, output: event.output },
+      },
+    };
+    // Track scanned ports for sub-rule B.3
+    const output = event.output;
+    if (output && typeof output === 'object') {
+      const o = output as Record<string, unknown>;
+      if (Array.isArray(o.scanned)) {
+        const ports = (o.scanned as unknown[]).filter(p => typeof p === 'number') as number[];
+        if (ports.length > 0) {
+          nextState.ruleB.lastScannedPorts = ports;
+        }
+      } else if (Array.isArray(o.ports)) {
+        const ports = (o.ports as unknown[]).filter(p => typeof p === 'number') as number[];
+        if (ports.length > 0) {
+          nextState.ruleB.lastScannedPorts = ports;
+        }
+      }
+    }
+    return { state: nextState };
+  }
+
+  return { state };
 }
