@@ -12,6 +12,7 @@ import { evilTwinTool } from './wifi/evil-twin';
 import { wifiDeauthTool } from './wifi/deauth';
 import { wifiteScanTool } from './wifi/wifite-scan';
 import { reportWriteTool } from './reports/write';
+import { reportPdfTool } from './reports/pdf.js';
 import type { z } from 'zod';
 
 /**
@@ -90,6 +91,11 @@ export const tools: Array<{ name: string; category: string; flags: readonly stri
     category: reportWriteTool.category,
     flags: reportWriteTool.flags,
   },
+  {
+    name: reportPdfTool.name,
+    category: reportPdfTool.category,
+    flags: reportPdfTool.flags,
+  },
 ];
 
 export { shellExecTool };
@@ -108,5 +114,6 @@ export { evilTwinTool } from './wifi/index';
 export { wifiDeauthTool } from './wifi/deauth';
 export { wifiteScanTool } from './wifi/wifite-scan';
 export { reportWriteTool } from './reports/write';
+export { reportPdfTool, renderPdfBuffer, ReportPdfInput, ReportPdfOutput, type ReportPdfInputT, type ReportPdfOutputT, type PdfReportMeta } from './reports/pdf.js';
 export { readSelections, writeSelections } from './reports/selections';
 export type { z };
