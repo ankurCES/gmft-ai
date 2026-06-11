@@ -82,7 +82,7 @@ export { summarizeIfNeeded, type SummarizeOpts, type SummarizeResult } from './a
 // in their app layer (e.g. AgentApp) to observe fires + inject advice.
 export { withSupervisor } from './agent/supervisor.js';
 export type { WithSupervisorOpts, SupervisorWrapper, HistoryRef } from './agent/supervisor.js';
-export type { SupervisorFire, SupervisorFireEvent, SupervisorPostmortemEvent } from './agent/supervisor-types.js';
+export type { SupervisorFire, SupervisorFireRecord, SupervisorFireEvent, SupervisorPostmortemEvent, SupervisorTurnRecord } from './agent/supervisor-types.js';
 
 export {
   createChokepoint,

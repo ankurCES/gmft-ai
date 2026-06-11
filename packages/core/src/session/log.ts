@@ -1,11 +1,35 @@
 import { appendFile, readFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
+import type { SupervisorTurnRecord } from '../agent/supervisor-types.js';
 
 export interface Turn {
   role: 'user' | 'assistant' | 'tool' | 'system';
   content: string;
   /** Optional metadata (token count, model id, etc.). Not redacted. */
   meta?: Record<string, unknown>;
+  /**
+   * v0.2.A.3+ — schema version of this turn's on-disk shape.
+   *
+   *   - `1` (or absent): the v0.1 shape — `role` + `content` + optional
+   *     `meta`. No supervisor data. This is the default for any line
+   *     read from a log written before v0.2.
+   *   - `2`: the v0.2.A+ shape. May include `supervisor: SupervisorTurnRecord`
+   *     (the supervisor's fires + postmortem for this turn).
+   *
+   * Writers (v0.2.A+) MUST set `schemaVersion: 2`. Readers MUST
+   * tolerate lines with or without the field — older logs and older
+   * turns inside a newer log are both v1.
+   */
+  schemaVersion?: 1 | 2;
+  /**
+   * v0.2.A.3+ — the supervisor's record for this turn (fires +
+   * postmortem). Absent on v0.1 turns and on v0.2 turns where the
+   * supervisor was opted out (e.g. no model configured). Secret
+   * redaction is applied to the postmortem text and the per-fire
+   * `quote` strings on disk via the same `redactSecrets` pass that
+   * scrubs user content — see `appendTurn` below.
+   */
+  supervisor?: SupervisorTurnRecord;
 }
 
 /**
@@ -18,11 +42,20 @@ export interface Turn {
  * on disk. This keeps the log safe to `cat`, `grep`, ship to CI
  * artifacts, paste into bug reports, etc.
  *
+ * v0.2.A.3 also redacts the `supervisor.postmortem` and
+ * `supervisor.fires[].quote` fields — they may contain LLM-quoted
+ * user text or pasted snippets, so they go through the same
+ * `redactSecrets` pass.
+ *
  * Use {@link appendTurnRaw} to bypass redaction for tests or trusted
  * internal paths.
  */
 export async function appendTurn(path: string, turn: Turn): Promise<void> {
-  const line = JSON.stringify(turn) + '\n';
+  // v0.2.A+ always writes schemaVersion: 2 (the supervisor field is
+  // optional, but the schema marker is mandatory on new lines so a
+  // reader can identify which version produced this line).
+  const toWrite: Turn = { schemaVersion: 2, ...turn };
+  const line = JSON.stringify(toWrite) + '\n';
   const safe = redactSecrets(line);
   await appendFile(path, safe, 'utf8');
 }
@@ -34,13 +67,19 @@ export async function appendTurn(path: string, turn: Turn): Promise<void> {
  * future code path that writes pre-sanitized data.
  */
 export async function appendTurnRaw(path: string, turn: Turn): Promise<void> {
-  const line = JSON.stringify(turn) + '\n';
+  const toWrite: Turn = { schemaVersion: 2, ...turn };
+  const line = JSON.stringify(toWrite) + '\n';
   await appendFile(path, line, 'utf8');
 }
 
 /**
  * Reads and parses the JSONL log. Returns `[]` if the file is missing.
  * Skips blank lines defensively (the file might be hand-edited).
+ *
+ * v0.2.A.3 migration: every parsed `Turn` is normalized so that
+ * `schemaVersion` is set — `1` for v0.1 lines (no `schemaVersion`
+ * field, no `supervisor` field), `2` for v0.2 lines. This is a
+ * read-time migration; the file on disk is not rewritten.
  *
  * Note: the on-disk form is already redacted by {@link appendTurn}, so
  * any secrets pasted in chat appear as `[REDACTED]` in the parsed
@@ -53,7 +92,16 @@ export async function readLog(path: string): Promise<Turn[]> {
   const turns: Turn[] = [];
   for (const line of text.split('\n')) {
     if (!line.trim()) continue;
-    turns.push(JSON.parse(line) as Turn);
+    const parsed = JSON.parse(line) as Turn;
+    // Read-time migration: backfill schemaVersion for v0.1 lines.
+    // A v0.1 line has no schemaVersion field and no supervisor field.
+    // We don't mutate the parsed object — we copy + backfill so
+    // callers see a uniform shape.
+    if (parsed.schemaVersion === undefined) {
+      turns.push({ ...parsed, schemaVersion: 1 });
+    } else {
+      turns.push(parsed);
+    }
   }
   return turns;
 }
