@@ -4,6 +4,71 @@ All notable changes to GMFT-AI are documented here.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning: [Semantic](https://semver.org/).
 
+## [0.2.0-A.2] — 2026-06-12
+
+Second slice of v0.2.A (multi-agent supervisor). Ships the
+`withSupervisor` wrapper that observes the inner `runTurn`
+`AsyncIterable<AgentEvent>`, runs the 3 rules from A.1, and injects
+advice into the agent's `history` array as `role: 'user'` messages.
+Wires the wrapper into `apps/gmft/src/AgentApp.tsx`. The postmortem
+generator, TUI surface, and schema migration are in A.3.
+
+### Added
+- `packages/core/src/agent/supervisor.ts` — `withSupervisor({...})`
+  wrapper. The 3 rules are run on every event; on a fire, the
+  wrapper yields a `supervisor-fire` event AND mutates the
+  caller's `historyRef` with a `role: 'user'` advice message
+  (mirrors v0.1's `AgentApp` mutation pattern, but with immutable
+  reassignment instead of in-place push). Resets all per-turn
+  state on `done` and `error`. The `chokepointSessionTarget` is
+  sticky across turns.
+- `packages/core/src/agent/loop.ts` — `tool-call-request` event
+  now carries an optional `flags` field (passes the registry-
+  declared flags through). Two new `AgentEvent` variants:
+  `supervisor-fire` (yielded by the wrapper) and
+  `supervisor-postmortem` (declared now, yielded by the A.3
+  generator). v0.1 tests unchanged.
+- `packages/core/src/index.ts` — re-exports `withSupervisor` and
+  the supervisor types from the public seam.
+- `apps/gmft/src/AgentApp.tsx` — wraps the `runTurn` call site
+  with `withSupervisor`. Introduces a `historyRef` so the
+  supervisor's advice accumulates across turns (v0.1 passed
+  `history: [userMsg]` as a fresh array, which would have lost
+  the advice). The rest of the TUI is unchanged; the A.3 phase
+  adds inline ⚠ markers and the StatusRail field.
+
+### Tests
+- 10 new tests in `supervisor.test.ts` (3 passthrough + 4 advice
+  injection + 3 Rule B/C integration) + 1 integration smoke test
+  in `apps/gmft/test/supervisor-integration.test.ts`.
+- v0.2.A.2 total: 406 (395 + 11). `pnpm -r test` green.
+- Typecheck clean.
+
+### Plan deviations
+The plan documented in `docs/superpowers/plans/2026-06-11-gmft-v0.2-A-supervisor.md`
+contained 9 bugs/ambiguities that this slice corrected:
+- Plan's test import paths (`./supervisor.js` etc.) were wrong for
+  `packages/core/test/`; corrected to `../src/agent/...js`.
+- `ChatMessage` lives in `context.ts`, not `chat-message.ts` (no
+  such file exists).
+- `distinctToolFamiliesThisTurn` was deleted in A.1's cleanup
+  (commit `e740de3`); wrapper uses `createInitialState` instead
+  of a hand-rolled literal.
+- `Tool.flags` is `readonly string[]` — `tool?.flags` is truthy
+  when empty, so the yield gates spread on `length > 0` instead.
+- Public seam is `packages/core/src/index.ts`, not
+  `packages/core/src/agent/index.ts` (no such file).
+- `AgentApp` change required a `historyRef` design change (v0.1
+  passed `[userMsg]` as a fresh array).
+- The plan's tests in Tasks 2.2 and 2.3 expected exactly-1 fires
+  in scenarios where Rule C.2 co-fires (3+ same-family tool
+  calls); corrected to `>= 1` and to assert specific fire kinds.
+- Rule C.1 test in plan had a recon tool first (nmap_scan IS
+  recon); corrected to use a non-recon tool first.
+- `historyRef.current` is immutable-reassigned, so test fixtures
+  must read from `historyRef.current` not from the original local
+  array variable.
+
 ## [0.2.0-A.1] — 2026-06-11
 
 First slice of v0.2.A (multi-agent supervisor). Ships the rule engine
