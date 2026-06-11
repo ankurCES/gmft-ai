@@ -4,17 +4,23 @@
  * Observes an inner `runTurn` `AsyncIterable<AgentEvent>`, runs the 3
  * rules from `supervisor-rules.ts` on every event, and on a fire:
  *
- *   1. Yields a `supervisor-fire` event AFTER the original event (so
- *      the TUI can render the trigger and the warning in the right
- *      order).
+ *   1. Yields a `supervisor-fire` event IMMEDIATELY BEFORE the
+ *      triggering event (fires and the event are emitted in the same
+ *      per-event chunk: [fire(s), event]). The TUI can read the
+ *      `targetEventId` to render an inline ⚠ marker next to the
+ *      matching event.
  *   2. Pushes a `role: 'user'` advice message into the caller's
- *      `historyRef.current` array, so the next LLM call within the
- *      same multi-step turn sees the supervisor's correction.
+ *      `historyRef.current` array, so the NEXT submit's `runTurn`
+ *      call (i.e. the next user turn) sees the supervisor's
+ *      correction. v0.2.A.2's architecture is single-turn `runTurn`
+ *      calls, not multi-step within a turn, so advice doesn't reach
+ *      the LLM mid-turn — it accumulates in the ref and shows up on
+ *      the next turn.
  *
  * On `done` or `error`, all per-turn state is reset for the next
  * turn. The `chokepointSessionTarget` is sticky across turns (it's
- * the session target, not a per-turn thing) — the factory call
- * preserves it.
+ * the session target, not a per-turn thing) — `createInitialState`
+ * preserves it on every reset.
  *
  * The wrapper also exposes `lastFires()` — an accessor for the
  * fires from the LAST completed turn. Used by the session log
@@ -39,7 +45,6 @@ import {
   observeRuleB,
   observeRuleC,
   applyFire,
-  resetForNewTurn,
 } from './supervisor-rules.js';
 import {
   createInitialState,
@@ -64,7 +69,7 @@ export interface WithSupervisorOpts {
   sessionFindings?: readonly { target?: string }[];
   /**
    * The chokepoint's session-scoped target. Sticky across turns —
-   * the factory preserves it through `resetForNewTurn`.
+   * `createInitialState` preserves it on every per-turn reset.
    */
   chokepointSessionTarget?: string;
 }
@@ -89,8 +94,8 @@ export function withSupervisor(opts: WithSupervisorOpts): SupervisorWrapper {
 
       // Collect any fires that triggered on this event. Order is A, B, C
       // (the order they ran in). Multiple rules can fire on the same
-      // event (e.g. A on a 4th nmap call AND B on a "scan complete"
-      // text-delta in the same turn) — both advice messages are pushed.
+      // event (e.g. A on a 4th nmap call AND C.2 on the 3rd nmap
+      // family call) — both advice messages are pushed.
       for (const fire of [rA.fire, rB.fire, rC.fire].filter(Boolean) as SupervisorFire[]) {
         state = applyFire(state, fire);
         // Mirror the v0.1 AgentApp history-mutation pattern, but
@@ -106,14 +111,14 @@ export function withSupervisor(opts: WithSupervisorOpts): SupervisorWrapper {
       // Always yield the original event unchanged.
       yield event;
 
-      // Turn boundary: snapshot fires, then reset.
+      // Turn boundary: snapshot fires, then reset for the next turn.
+      // createInitialState preserves chokepointSessionTarget (the
+      // equivalent `resetForNewTurn(state)` would also preserve it
+      // if the state already had it set; the factory form is more
+      // explicit).
       if (event.type === 'done' || event.type === 'error') {
         lastFires = state.firesThisTurn;
         state = createInitialState(opts.chokepointSessionTarget);
-        // resetForNewTurn preserves chokepointSessionTarget if it was
-        // set on the state. The factory above also sets it. So this
-        // is equivalent to: state = resetForNewTurn(state). We use
-        // the factory for explicitness.
       }
     }
   })();
