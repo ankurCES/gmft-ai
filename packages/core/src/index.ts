@@ -78,6 +78,11 @@ export { getDefaultModel } from './llm/model-catalog.js';
 export { runTurn, type AgentEvent, type RunTurnOpts } from './agent/loop.js';
 export { tokenEstimate, totalTokens, type ChatMessage, type ChatRole } from './agent/context.js';
 export { summarizeIfNeeded, type SummarizeOpts, type SummarizeResult } from './agent/summarizer.js';
+// v0.2.A.2 — the supervisor wrapper. Consumers wire this around `runTurn`
+// in their app layer (e.g. AgentApp) to observe fires + inject advice.
+export { withSupervisor } from './agent/supervisor.js';
+export type { WithSupervisorOpts, SupervisorWrapper, HistoryRef } from './agent/supervisor.js';
+export type { SupervisorFire, SupervisorFireEvent, SupervisorPostmortemEvent } from './agent/supervisor-types.js';
 
 export {
   createChokepoint,
