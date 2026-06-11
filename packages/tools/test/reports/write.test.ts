@@ -146,4 +146,50 @@ describe('report_write tool', () => {
     expect(body).toContain('c-low');
     expect(body).not.toContain('b-high');
   });
+
+  it('writes a valid JSON report with metadata + findings array (includeEvidence default true)', async () => {
+    seedFindings(baseDir, sessionId, [
+      { id: 'f-1', tool: 'nmap', target: '10.0.0.1', severity: 'high', title: 'open port', evidence: '22/tcp open ssh', ts: 1 },
+      { id: 'f-2', tool: 'nikto', target: '10.0.0.1', severity: 'low', title: 'cookie flag', evidence: 'Set-Cookie: foo=bar', ts: 2 },
+      { id: 'f-3', tool: 'sqlmap', target: '10.0.0.1', severity: 'info', title: 'noise', ts: 3 },
+    ]);
+
+    const result = await reportWriteTool.run(
+      { baseDir, sessionId, format: 'json', severityFilter: 'low' },
+      makeCtx(),
+    );
+
+    expect(result.format).toBe('json');
+    expect(result.findingCount).toBe(2); // f-1 + f-2 (f-3 is info, dropped)
+    expect(result.path.endsWith(`${sessionId}.json`)).toBe(true);
+    const body = readFileSync(result.path, 'utf8');
+    const doc = JSON.parse(body);
+    expect(doc.schema).toBe('gmft.report.v1');
+    expect(doc.sessionId).toBe(sessionId);
+    expect(typeof doc.generatedAt).toBe('string');
+    expect(doc.count).toBe(2);
+    expect(doc.severities).toEqual({ info: 0, low: 1, medium: 0, high: 1, critical: 0 });
+    expect(doc.findings).toHaveLength(2);
+    expect(doc.findings[0].id).toBe('f-1');
+    expect(doc.findings[0].evidence).toBe('22/tcp open ssh');
+    expect(doc.findings[1].id).toBe('f-2');
+  });
+
+  it('JSON output honors includeEvidence=false and strips the evidence field', async () => {
+    seedFindings(baseDir, sessionId, [
+      { id: 'f-1', tool: 'nmap', target: '10.0.0.1', severity: 'high', title: 'open port', evidence: '22/tcp open ssh', ts: 1 },
+    ]);
+
+    const result = await reportWriteTool.run(
+      { baseDir, sessionId, format: 'json', severityFilter: 'low', includeEvidence: false },
+      makeCtx(),
+    );
+
+    expect(result.findingCount).toBe(1);
+    const body = readFileSync(result.path, 'utf8');
+    const doc = JSON.parse(body);
+    expect(doc.findings[0].id).toBe('f-1');
+    expect(doc.findings[0].title).toBe('open port');
+    expect('evidence' in doc.findings[0]).toBe(false);
+  });
 });

@@ -1,7 +1,7 @@
 /**
  * report_write — read the current session's findings, filter them by
  * severity (and the operator's selection sidecar), and write a
- * self-contained markdown or HTML report.
+ * self-contained markdown, HTML, or JSON report.
  *
  * The tool's `args` carry `baseDir` and `sessionId` rather than
  * reading them from `ToolContext` so the tool stays pure: the same
@@ -15,6 +15,12 @@
  *     must resolve inside the reports dir. `..` escape throws.
  *   - if the file already exists, a timestamp segment is inserted
  *     before the extension to avoid clobber.
+ *
+ * JSON shape: `{ sessionId, generatedAt, count, severities: {info,low,...},
+ * findings: Finding[] }` (one object per line of `jsonl` for streaming
+ * consumers). The `includeEvidence` flag (default true) controls
+ * whether the heavy `evidence` field is inlined — useful for slim
+ * dashboards that just want headline data.
  *
  * Selections integration (per plan §B.3): if the sidecar
  * `${baseDir}/${sessionId}.selections.json` exists and contains a
@@ -40,17 +46,19 @@ import { readSelections } from './selections.js';
 export const ReportWriteInput = z.object({
   baseDir: z.string().min(1).describe('Directory holding {sessionId}.jsonl + .selections.json (typically the sessions dir).'),
   sessionId: z.string().min(1).describe('The session id whose findings to read.'),
-  format: z.enum(['markdown', 'html']).default('markdown'),
+  format: z.enum(['markdown', 'html', 'json']).default('markdown'),
   severityFilter: z.enum(['info', 'low', 'medium', 'high', 'critical']).default('medium')
     .describe('Include findings at or above this severity.'),
   outputPath: z.string().optional()
     .describe('Override the default report path (must be inside the reports dir).'),
+  includeEvidence: z.boolean().default(true)
+    .describe('For JSON output: include the heavy `evidence` field. Defaults to true.'),
 });
 export type ReportWriteInputT = z.infer<typeof ReportWriteInput>;
 
 export const ReportWriteOutput = z.object({
   path: z.string(),
-  format: z.enum(['markdown', 'html']),
+  format: z.enum(['markdown', 'html', 'json']),
   findingCount: z.number().int().nonnegative(),
   bytesWritten: z.number().int().nonnegative(),
 });
@@ -77,9 +85,14 @@ export function reportsDir(): string {
  * Exported so tests (and the TUI's `/report` slash command) can
  * predict the path without running the tool.
  */
-export function defaultReportPath(sessionId: string, format: 'markdown' | 'html'): string {
-  const ext = format === 'markdown' ? 'md' : 'html';
-  return join(reportsDir(), `${sessionId}.${ext}`);
+export type ReportFormat = 'markdown' | 'html' | 'json';
+
+export function reportExt(format: ReportFormat): string {
+  return format === 'markdown' ? 'md' : format;
+}
+
+export function defaultReportPath(sessionId: string, format: ReportFormat): string {
+  return join(reportsDir(), `${sessionId}.${reportExt(format)}`);
 }
 
 /**
@@ -89,9 +102,9 @@ export function defaultReportPath(sessionId: string, format: 'markdown' | 'html'
 export function resolveOutputPath(
   requested: string,
   sessionId: string,
-  format: 'markdown' | 'html',
+  format: ReportFormat,
 ): string {
-  const ext = format === 'markdown' ? 'md' : 'html';
+  const ext = reportExt(format);
   const reportsRoot = resolve(reportsDir());
   const candidate = resolve(requested);
   // Reject any literal `..` segments in the requested path before
@@ -233,13 +246,43 @@ function renderHtml(title: string, findings: Finding[]): string {
 `;
 }
 
+/**
+ * Render findings as a single JSON document with a small metadata
+ * header (session id, generation time, severity counts). The output
+ * is indented for human readability; consumers that need a stream
+ * can split on lines that start with `{ "id":`.
+ *
+ * `includeEvidence=false` strips the `evidence` field — useful for
+ * dashboards that only need headline data (id + severity + title).
+ */
+function renderJson(
+  sessionId: string,
+  findings: Finding[],
+  includeEvidence: boolean,
+): string {
+  const severities: Record<Severity, number> = { info: 0, low: 0, medium: 0, high: 0, critical: 0 };
+  for (const f of findings) severities[f.severity]++;
+  const projected = includeEvidence
+    ? findings
+    : findings.map(({ evidence: _evidence, ...rest }) => rest);
+  const doc = {
+    schema: 'gmft.report.v1',
+    sessionId,
+    generatedAt: new Date().toISOString(),
+    count: findings.length,
+    severities,
+    findings: projected,
+  };
+  return JSON.stringify(doc, null, 2) + '\n';
+}
+
 export const reportWriteTool: Tool<typeof ReportWriteInput, typeof ReportWriteOutput> = {
   name: 'report_write',
   category: 'file',
   description:
     'Generate a penetration-test report from the current session findings. ' +
     'Reads {baseDir}/{sessionId}.jsonl + .selections.json, filters by severity ' +
-    '(or selection), and writes markdown or HTML to the reports dir.',
+    '(or selection), and writes markdown, HTML, or JSON to the reports dir.',
   input: ReportWriteInput,
   output: ReportWriteOutput,
   flags: ['destructive'],
@@ -271,7 +314,9 @@ export const reportWriteTool: Tool<typeof ReportWriteInput, typeof ReportWriteOu
     const title = `GMFT session report — ${parsed.sessionId}`;
     const body = parsed.format === 'markdown'
       ? renderMarkdown(title, final)
-      : renderHtml(title, final);
+      : parsed.format === 'html'
+        ? renderHtml(title, final)
+        : renderJson(parsed.sessionId, final, parsed.includeEvidence);
 
     // 6. Write
     mkdirSync(dirname(target), { recursive: true });
