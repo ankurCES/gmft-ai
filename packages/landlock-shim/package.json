@@ -1,0 +1,41 @@
+{
+  "name": "@gmft/landlock-shim",
+  "version": "0.0.1",
+  "private": true,
+  "description": "N-API binding to Linux's landlock LSM. Forked from mscdex/landlock@0.0.1 to drop the Nan dependency so it loads on Node 22+ through Node 26. See docs/superpowers/plans/2026-06-17-gmft-v0.2-D-host-sandbox.md ADR-0011 and packages/landlock-shim/README.md for the rationale.",
+  "main": "./index.js",
+  "types": "./index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./index.d.ts",
+      "import": "./index.js",
+      "require": "./index.js"
+    }
+  },
+  "files": [
+    "index.js",
+    "index.d.ts",
+    "build",
+    "binding.gyp",
+    "src"
+  ],
+  "scripts": {
+    "build": "node-gyp rebuild",
+    "build:debug": "node-gyp rebuild --debug",
+    "clean": "node-gyp clean",
+    "test": "node test/abi.test.js"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "os": [
+    "linux"
+  ],
+  "devDependencies": {
+    "node-gyp": "^10.0.0",
+    "typescript": "^5.5.4"
+  },
+  "dependencies": {
+    "node-addon-api": "^8.0.0"
+  }
+}
