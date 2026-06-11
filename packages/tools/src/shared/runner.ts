@@ -2,7 +2,7 @@ import { spawn } from 'node:child_process';
 import { assertBinary, isPrereqCheckSkipped } from './prereq';
 import { applyLandlock } from './landlock.js';
 import { applySeccomp, type SeccompPolicyKind } from './seccomp.js';
-import { runnerCapabilities } from './capabilities.js';
+import { runnerCapabilities, type RunnerCapabilities } from './capabilities.js';
 import type { LandlockApplyOpts } from './landlock.js';
 
 /**

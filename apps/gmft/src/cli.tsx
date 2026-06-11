@@ -27,6 +27,7 @@ import { AgentApp } from './AgentApp.js';
 import { createOnboardRuntime } from './onboard/runtime.js';
 import { bindProviderUI } from './onboard/bind-provider-ui.js';
 import { SessionStore } from './session/store.js';
+import { parseSandboxFlag } from './sandbox-flag.js';
 
 const cli = meow(
   `
@@ -40,6 +41,12 @@ const cli = meow(
                         the chokepoint denies any targetRequired tool call whose
                         args.target doesn't match. Format: a single host label
                         (e.g. "scanme.nmap.org"); one per session.
+    --sandbox <mode>    Runner mode for this invocation. v0.2.D.
+                        auto   — pick the best available (default)
+                        docker — require Docker; refuse to fall back
+                        host   — force the host runner (bypasses Docker/landlock
+                                 unless GMFT_ALLOW_UNSANDBOXED_DESTRUCTIVE=true
+                                 for destructive/elevated tools)
     --resume <id>       Resume a specific session id (skips the current-session pointer)
     --help              Show this help
     --version           Show version
@@ -48,6 +55,7 @@ const cli = meow(
     $ gmft
     $ gmft --reconfigure
     $ gmft --theme dark
+    $ gmft --sandbox docker
     $ gmft --resume 20260611-094512-abcdef
 `,
   {
@@ -57,6 +65,7 @@ const cli = meow(
       theme: { type: 'string', default: 'auto' },
       target: { type: 'string' },
       resume: { type: 'string' },
+      sandbox: { type: 'string', default: 'auto' },
     },
   },
 );
@@ -114,6 +123,33 @@ try {
   }
 } catch (err) {
   console.error('Onboarding failed:', err instanceof Error ? err.message : String(err));
+  process.exit(1);
+}
+
+// v0.2.D — apply the --sandbox CLI flag. Validated above;
+// parseSandboxFlag throws on invalid values.
+try {
+  const sandboxFlag = parseSandboxFlag(cli.flags.sandbox);
+  if (sandboxFlag !== 'auto') {
+    // Persist on the config so the rest of the runtime (incl.
+    // `sandboxMode: config.sandbox.mode` below) can read it. The
+    // existing `mode` field is the runtime's source of truth; we
+    // also keep `runner` so the chokepoint can distinguish "user
+    // explicitly forced" from "config default".
+    config.sandbox = {
+      ...config.sandbox,
+      mode: sandboxFlag,
+      runner: sandboxFlag,
+    };
+  } else {
+    // 'auto' — keep the existing mode + record the intent.
+    config.sandbox = {
+      ...config.sandbox,
+      runner: 'auto',
+    };
+  }
+} catch (err) {
+  console.error(err instanceof Error ? err.message : String(err));
   process.exit(1);
 }
 

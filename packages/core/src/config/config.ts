@@ -13,6 +13,17 @@ export interface LlmConfig {
 export interface SandboxConfig {
   mode: 'docker' | 'host';
   defaultImage?: string;
+  /**
+   * v0.2.D — the runner mode for this CLI invocation. Overrides
+   * `mode` when the `--sandbox <value>` CLI flag is passed.
+   * Defaults to `'auto'`, which means: pick the best available
+   * runner (Docker if installed, otherwise host with landlock if
+   * the kernel supports it, otherwise unsandboxed).
+   *
+   * `'auto' | 'docker' | 'host'` mirrors `RunnerCapabilities['resolvedAuto']`
+   * in `@gmft/tools` plus the explicit host override.
+   */
+  runner?: 'auto' | 'docker' | 'host';
 }
 
 export interface ChokepointConfig {

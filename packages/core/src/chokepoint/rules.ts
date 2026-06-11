@@ -10,7 +10,9 @@
  *      literal get that stricter prompt (overrides plain `confirm`).
  *   3. `checkDestructive`   — `destructive` tools always Confirm.
  *   4. `checkTarget`        — target format + private-network denylist.
- *   5. `Allow`              — default.
+ *   5. `checkRequiresSandbox` — v0.2.D: deny destructive/elevated
+ *      calls when the resolved runner is `host` and no override.
+ *   6. `Allow`              — default.
  *
  * The order is tested in `chokepoint.test.ts`. Changing it is a breaking
  * change for any operator who has memorized the rule order from an audit
