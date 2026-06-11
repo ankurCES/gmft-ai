@@ -2,6 +2,16 @@ import { Box, Text } from 'ink';
 import type { Severity } from '@gmft/core';
 import type { Theme } from '../theme.js';
 
+/**
+ * v0.2.A.3 — the supervisor's high-level state for the current turn.
+ * Drives the Supervisor field in the StatusRail. Pure UI state — the
+ * rule engine in `@gmft/core/agent/supervisor-rules` produces the
+ * fires that drive this, and the wrapper exposes them via
+ * `lastFires()`. The TUI maps `lastFires().length > 0` to `fires`
+ * and a non-empty `lastPostmortem().body` to `postmortem`.
+ */
+export type SupervisorState = 'quiet' | 'fires' | 'postmortem';
+
 export interface StatusInfo {
   model: string;
   provider: string;
@@ -19,6 +29,17 @@ export interface StatusInfo {
    * rendered muted to keep the focus on real findings.
    */
   findingsBySeverity: Record<Severity, number>;
+  /**
+   * v0.2.A.3 — supervisor state for the current turn. Default
+   * `'quiet'` when no rule fired and no postmortem was written.
+   */
+  supervisor: SupervisorState;
+  /**
+   * v0.2.A.3 — number of supervisor fires in the current turn.
+   * Only meaningful when `supervisor === 'fires'`. The StatusRail
+   * renders `⚠ N fire(s)` in yellow.
+   */
+  fireCount: number;
 }
 
 export function StatusRail({ status, theme }: { status: StatusInfo; theme: Theme }): React.JSX.Element {
@@ -43,6 +64,8 @@ export function StatusRail({ status, theme }: { status: StatusInfo; theme: Theme
           )}
           {theme.muted('  sandbox ')}
           {sandboxLabel}
+          {theme.muted('  supervisor ')}
+          <SupervisorField status={status} theme={theme} />
         </Text>
       </Box>
       <Box>
@@ -61,6 +84,33 @@ export function StatusRail({ status, theme }: { status: StatusInfo; theme: Theme
       </Box>
     </Box>
   );
+}
+
+/**
+ * Pure render of the Supervisor field. Public for unit testing.
+ *
+ *   - `'quiet'`     → `quiet` (dim)
+ *   - `'fires'`     → `⚠ N fire(s)` (yellow)
+ *   - `'postmortem'`→ `ⓘ postmortem` (cyan)
+ */
+export function renderSupervisorField(status: Pick<StatusInfo, 'supervisor' | 'fireCount'>): string {
+  if (status.supervisor === 'fires') {
+    const n = status.fireCount;
+    return `⚠ ${n} fire${n === 1 ? '' : 's'}`;
+  }
+  if (status.supervisor === 'postmortem') return 'ⓘ postmortem';
+  return 'quiet';
+}
+
+function SupervisorField({ status, theme }: { status: StatusInfo; theme: Theme }): React.JSX.Element {
+  if (status.supervisor === 'fires') {
+    return <Text color="yellow">{renderSupervisorField(status)}</Text>;
+  }
+  if (status.supervisor === 'postmortem') {
+    return <Text color="cyan">{renderSupervisorField(status)}</Text>;
+  }
+  // 'quiet' — dim via theme
+  return <Text dimColor>{renderSupervisorField(status)}</Text>;
 }
 
 /**

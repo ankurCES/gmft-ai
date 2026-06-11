@@ -41,8 +41,8 @@ describe('SessionStore', () => {
     await store.append({ role: 'assistant', content: 'hi', meta: { ts: 1001 } });
     const turns = await store.load(id);
     expect(turns).toEqual([
-      { role: 'user', content: 'hello', meta: { ts: 1000 }, ts: turns[0]!.ts, id: '1' },
-      { role: 'assistant', content: 'hi', meta: { ts: 1001 }, ts: turns[1]!.ts, id: '2' },
+      { schemaVersion: 2, role: 'user', content: 'hello', meta: { ts: 1000 }, ts: turns[0]!.ts, id: '1' },
+      { schemaVersion: 2, role: 'assistant', content: 'hi', meta: { ts: 1001 }, ts: turns[1]!.ts, id: '2' },
     ]);
   });
 
@@ -94,7 +94,7 @@ describe('SessionStore', () => {
     expect(await store.currentId()).toBe('a');
     const turns = await store.current();
     expect(turns).toEqual([
-      { role: 'user', content: 'a', meta: { ts: 1 }, ts: turns[0]!.ts, id: '1' },
+      { schemaVersion: 2, role: 'user', content: 'a', meta: { ts: 1 }, ts: turns[0]!.ts, id: '1' },
     ]);
   });
 
@@ -106,7 +106,7 @@ describe('SessionStore', () => {
     // The log file should still be there and loadable.
     const loaded = await store.load('keep-me');
     expect(loaded).toEqual([
-      { role: 'user', content: 'x', meta: { ts: 1 }, ts: loaded[0]!.ts, id: '1' },
+      { schemaVersion: 2, role: 'user', content: 'x', meta: { ts: 1 }, ts: loaded[0]!.ts, id: '1' },
     ]);
     // And it should still appear in list().
     const list = await store.list();

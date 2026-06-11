@@ -181,6 +181,12 @@ export function App({
     toolCalls: 0,
     findings: 0,
     findingsBySeverity: { info: 0, low: 0, medium: 0, high: 0, critical: 0 },
+    // v0.2.A.3 — default to 'quiet' so the StatusRail has a
+    // well-defined supervisor field. Production runs override this
+    // via the AgentApp's `setStatus` path; tests + smoke path use
+    // the default.
+    supervisor: 'quiet',
+    fireCount: 0,
     ...initialStatus,
   }));
   const status = controlledStatus ?? internalStatus;

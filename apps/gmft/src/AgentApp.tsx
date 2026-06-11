@@ -192,6 +192,12 @@ export function AgentApp({
     toolCalls: 0,
     findings: 0,
     findingsBySeverity: { info: 0, low: 0, medium: 0, high: 0, critical: 0 },
+    // v0.2.A.3 — supervisor state for the current turn. Defaults to
+    // 'quiet' (no fires, no postmortem) and 0 fires. Updated from
+    // `wrapped.lastFires()` and `wrapped.lastPostmortem()` after each
+    // turn completes.
+    supervisor: 'quiet',
+    fireCount: 0,
   }));
 
   // Rebuild the live model from the current (provider, model, key, endpoint).
