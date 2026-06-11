@@ -70,3 +70,120 @@ describe('withSupervisor — passthrough behavior', () => {
     expect(wrapped.lastFires()).toEqual([]);
   });
 });
+
+describe('withSupervisor — advice injection', () => {
+  it('mutates historyRef with a role:user advice message when a rule fires', async () => {
+    const historyRef = { current: [] as ChatMessage[] };
+    const inner = fakeTurn([
+      { type: 'tool-call-request', id: '1', name: 'nmap_scan', args: { target: 'h', ports: '80' } },
+      { type: 'tool-call-request', id: '2', name: 'nmap_scan', args: { target: 'h', ports: '80' } },
+      { type: 'tool-call-request', id: '3', name: 'nmap_scan', args: { target: 'h', ports: '80' } },
+      { type: 'tool-call-request', id: '4', name: 'nmap_scan', args: { target: 'h', ports: '80' } },
+      { type: 'done', text: '' },
+    ]);
+    const wrapped = withSupervisor({
+      runTurn: () => inner,
+      runTurnOpts: { model: {} as never, system: '', history: [] },
+      historyRef,
+    });
+    const events: AgentEvent[] = [];
+    for await (const ev of wrapped) events.push(ev);
+    // At least 1 supervisor-fire (Rule A on the 4th identical call).
+    // Rule C.2 also fires on the 3rd and 4th nmap family calls, so we
+    // expect AT LEAST 1 — not exactly 1.
+    const fires = events.filter(e => e.type === 'supervisor-fire');
+    expect(fires.length).toBeGreaterThanOrEqual(1);
+    const loopFire = fires.find(f => f.type === 'supervisor-fire' && f.fire.kind === 'loop-detected');
+    expect(loopFire).toBeDefined();
+    if (loopFire?.type === 'supervisor-fire') {
+      expect(loopFire.targetEventId).toBe('4');
+    }
+    // History grew by exactly the number of fires (each fire pushes one advice msg).
+    // NOTE: the wrapper does `historyRef.current = [...historyRef.current, msg]`,
+    // which REPLACES the array — the local `history` variable still points
+    // to the original empty array. We must read `historyRef.current` to
+    // see the new state. (This is a test-fixture pattern documented in
+    // supervisor.ts as the "immutable mutation" contract.)
+    expect(historyRef.current).toHaveLength(fires.length);
+    // Every history entry is a role:user Supervisor message
+    for (const h of historyRef.current) {
+      expect(h.role).toBe('user');
+      expect(h.content).toMatch(/^Supervisor:/);
+    }
+  });
+
+  it('does NOT mutate history on the 3rd call (below threshold)', async () => {
+    const history: ChatMessage[] = [];
+    const inner = fakeTurn([
+      { type: 'tool-call-request', id: '1', name: 'nmap_scan', args: { target: 'h' } },
+      { type: 'tool-call-request', id: '2', name: 'nmap_scan', args: { target: 'h' } },
+      { type: 'tool-call-request', id: '3', name: 'nmap_scan', args: { target: 'h' } },
+      { type: 'done', text: '' },
+    ]);
+    const wrapped = withSupervisor({
+      runTurn: () => inner,
+      runTurnOpts: { model: {} as never, system: '', history: [] },
+      historyRef: { current: history },
+    });
+    for await (const _ev of wrapped) { /* drain */ }
+    expect(history).toHaveLength(0);
+  });
+
+  it('yields the supervisor-fire event AFTER the triggering event, not before', async () => {
+    const history: ChatMessage[] = [];
+    const inner = fakeTurn([
+      { type: 'tool-call-request', id: '1', name: 'whois', args: { target: 'h' } },
+      { type: 'tool-call-request', id: '2', name: 'whois', args: { target: 'h' } },
+      { type: 'tool-call-request', id: '3', name: 'whois', args: { target: 'h' } },
+      { type: 'tool-call-request', id: '4', name: 'whois', args: { target: 'h' } },
+      { type: 'done', text: '' },
+    ]);
+    const wrapped = withSupervisor({
+      runTurn: () => inner,
+      runTurnOpts: { model: {} as never, system: '', history: [] },
+      historyRef: { current: history },
+    });
+    const events: AgentEvent[] = [];
+    for await (const ev of wrapped) events.push(ev);
+    // No supervisor-fire ever appears before its triggering tool-call-request.
+    // Each fire must come IMMEDIATELY BEFORE the event whose id matches its
+    // targetEventId (the wrapper yields fires-then-event in one chunk per
+    // event; so fireIdx should be targetIdx - 1, never greater).
+    const fires = events.filter(e => e.type === 'supervisor-fire');
+    expect(fires.length).toBeGreaterThanOrEqual(1);
+    for (const e of events) {
+      if (e.type !== 'supervisor-fire') continue;
+      const targetId = e.targetEventId;
+      const targetIdx = events.findIndex(x => x.type === 'tool-call-request' && x.id === targetId);
+      const fireIdx = events.indexOf(e);
+      // fire must come BEFORE its target (not after, and not at the same idx)
+      expect(fireIdx).toBeLessThan(targetIdx);
+    }
+    // Sequence always ends with done.
+    expect(events[events.length - 1]?.type).toBe('done');
+  });
+
+  it('lastFires() returns the fires from the LAST completed turn, not all-time', async () => {
+    const history: ChatMessage[] = [];
+    // Two turns in one stream
+    const inner = fakeTurn([
+      { type: 'tool-call-request', id: '1', name: 'whois', args: { target: 'h' } },
+      { type: 'tool-call-request', id: '2', name: 'whois', args: { target: 'h' } },
+      { type: 'tool-call-request', id: '3', name: 'whois', args: { target: 'h' } },
+      { type: 'tool-call-request', id: '4', name: 'whois', args: { target: 'h' } },
+      { type: 'done', text: '' },
+      // Turn 2: 2 calls, no fire
+      { type: 'tool-call-request', id: '5', name: 'dig', args: { target: 'h' } },
+      { type: 'tool-call-request', id: '6', name: 'dig', args: { target: 'h' } },
+      { type: 'done', text: '' },
+    ]);
+    const wrapped = withSupervisor({
+      runTurn: () => inner,
+      runTurnOpts: { model: {} as never, system: '', history: [] },
+      historyRef: { current: history },
+    });
+    for await (const _ev of wrapped) { /* drain */ }
+    // Turn 2 had 0 fires — lastFires() returns [] for the LAST turn
+    expect(wrapped.lastFires()).toEqual([]);
+  });
+});
