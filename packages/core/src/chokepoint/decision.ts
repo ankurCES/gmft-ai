@@ -59,6 +59,18 @@ export interface ChokepointEnv {
   allowElevation: boolean;
   /** Mirrors `cfg.chokepoint.denylist`. */
   denylist: readonly string[];
+  /**
+   * The session-level target (from `--target <host>` on the CLI, or
+   * set later by the operator). When present, any `targetRequired`
+   * call whose `args.target` does not match is denied with a
+   * "scope mismatch" reason — this is what stops a single chat from
+   * drifting to an unauthorized host mid-run.
+   *
+   * Undefined = no session target set. The chokepoint does not
+   * enforce scope in that case (the per-call `args.target` is
+   * still format-checked and denylist-checked as before).
+   */
+  sessionTarget?: string;
 }
 
 export interface Chokepoint {

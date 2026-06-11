@@ -105,6 +105,54 @@ describe('createChokepoint', () => {
         .toEqual({ kind: 'deny', reason: 'target "evil.example.com" is on the chokepoint denylist' });
     });
 
+    it('denies a targetRequired call whose args.target does not match the session target', () => {
+      // The chokepoint binds the whole session to one host. Any tool
+      // call whose args.target drifts off the session target is denied
+      // with a "scope mismatch" reason. The session target itself is
+      // set at boot (CLI --target, see AgentApp) and is immutable for
+      // the lifetime of the run.
+      const cp = createChokepoint({ ...baseEnv, sessionTarget: 'scanme.nmap.org' });
+      expect(cp.decide(call({ flags: ['targetRequired'], args: { target: 'other.example.com' } })))
+        .toEqual({
+          kind: 'deny',
+          reason:
+            'target "other.example.com" does not match session target "scanme.nmap.org" ' +
+            '(start a new session with --target <host> to change scope)',
+        });
+    });
+
+    it('allows a targetRequired call whose args.target matches the session target', () => {
+      const cp = createChokepoint({ ...baseEnv, sessionTarget: 'scanme.nmap.org' });
+      expect(cp.decide(call({ flags: ['targetRequired'], args: { target: 'scanme.nmap.org' } })).kind)
+        .toBe('allow');
+    });
+
+    it('skips the session-target check when sessionTarget is unset', () => {
+      // Without --target, the chokepoint does not enforce cross-call
+      // binding. Per-call args.target is still format- and denylist-
+      // checked, but any well-formed target is allowed.
+      const cp = createChokepoint({ ...baseEnv });
+      expect(cp.decide(call({ flags: ['targetRequired'], args: { target: 'one.example.com' } })).kind)
+        .toBe('allow');
+      expect(cp.decide(call({ flags: ['targetRequired'], args: { target: 'two.example.com' } })).kind)
+        .toBe('allow');
+    });
+
+    it('reads sessionTarget through readChokepointEnv when provided', () => {
+      const env = readChokepointEnv({
+        cfg: { chokepoint: { allowPrivateNetworks: false, denylist: [] } },
+        sessionTarget: 'scanme.nmap.org',
+      });
+      expect(env.sessionTarget).toBe('scanme.nmap.org');
+    });
+
+    it('leaves sessionTarget undefined when readChokepointEnv is called without one', () => {
+      const env = readChokepointEnv({
+        cfg: { chokepoint: { allowPrivateNetworks: false, denylist: [] } },
+      });
+      expect(env.sessionTarget).toBeUndefined();
+    });
+
     it('skips the target check when targetRequired is not in flags', () => {
       const cp = createChokepoint(baseEnv);
       // No target, no targetRequired — still allowed.

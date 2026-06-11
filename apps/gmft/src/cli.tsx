@@ -36,7 +36,11 @@ const cli = meow(
   Options
     --reconfigure       Re-run onboarding (re-prompts all fields)
     --theme <name>      auto | dark | light | high-contrast
-    --target <host>     Session target (lands in phase 6)
+    --target <host>     Session target. Pins the whole session to a single host —
+                        the chokepoint denies any targetRequired tool call whose
+                        args.target doesn't match. Format: a single host label
+                        (e.g. "scanme.nmap.org"); one per session.
+    --resume <id>       Resume a specific session id (skips the current-session pointer)
     --help              Show this help
     --version           Show version
 
@@ -44,6 +48,7 @@ const cli = meow(
     $ gmft
     $ gmft --reconfigure
     $ gmft --theme dark
+    $ gmft --resume 20260611-094512-abcdef
 `,
   {
     importMeta: import.meta,
@@ -51,6 +56,7 @@ const cli = meow(
       reconfigure: { type: 'boolean', default: false },
       theme: { type: 'string', default: 'auto' },
       target: { type: 'string' },
+      resume: { type: 'string' },
     },
   },
 );
@@ -117,14 +123,36 @@ const initialStatus = {
   ...(cli.flags.target ? { target: cli.flags.target } : {}),
 };
 
-// Set up the session store. We try to resume the previous session (if
-// `current-session-id` points at a log file) so the TUI comes up with
-// the same conversation the user was in last time. The store itself
-// never throws at construction; missing roots just return [].
+// Set up the session store. By default we resume the previous
+// session (the `current-session-id` pointer). The `--resume <id>`
+// flag overrides that and pins the TUI to a specific historical
+// session; we also update the pointer so subsequent runs land on
+// the resumed session. If the explicit id has no log on disk, we
+// fall back to whatever the pointer resolves to and warn.
 const session = new SessionStore();
 let initialMessages: import('./ui/components/Message.js').Message[] = [];
 try {
-  const id = await session.currentId();
+  let id: string | null = null;
+  if (cli.flags.resume) {
+    const requested = cli.flags.resume;
+    // Try the requested id first; if the log is missing, we still
+    // want to honor the user's choice but warn — better to surface
+    // the gap than silently load a different session.
+    const turns = await session.load(requested);
+    if (turns.length === 0) {
+      console.error(
+        `--resume: no log found for session "${requested}". ` +
+        `Falling back to the current-session pointer.`,
+      );
+      id = await session.currentId();
+    } else {
+      // Update the pointer so future `gmft` (no flag) starts here.
+      await session.setCurrent(requested);
+      id = requested;
+    }
+  } else {
+    id = await session.currentId();
+  }
   if (id) {
     const turns = await session.load(id);
     initialMessages = turns.map((t, i) => ({

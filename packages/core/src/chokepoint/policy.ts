@@ -14,11 +14,14 @@ import type { ChokepointEnv } from './decision.js';
 export function readChokepointEnv(opts: {
   cfg: { chokepoint: { allowPrivateNetworks: boolean; denylist: readonly string[] } };
   env?: NodeJS.ProcessEnv;
+  /** Session-level target. Omitted for short-lived CLI invocations. */
+  sessionTarget?: string;
 }): ChokepointEnv {
   const env = opts.env ?? process.env;
   return {
     allowPrivateNetworks: opts.cfg.chokepoint.allowPrivateNetworks,
     allowElevation: env.GMFT_ALLOW_ELEVATION === 'true',
     denylist: opts.cfg.chokepoint.denylist,
+    sessionTarget: opts.sessionTarget,
   };
 }

@@ -44,11 +44,22 @@ import {
   dnsenumTool,
   theHarvesterTool,
   whatwebTool,
+  reportWriteTool,
+  reportPdfTool,
 } from '@gmft/tools';
 import { App, type AppProps } from './App.js';
 import type { Message as Msg } from './ui/components/Message.js';
 import { SessionStore } from './session/store.js';
-import { dispatchSlash } from './session/commands.js';
+import {
+  dispatchSlash,
+  type ReportFormat,
+  type RunReportOpts,
+  type RunReportResult,
+} from './session/commands.js';
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
+
+const execFileAsync = promisify(execFile);
 
 /**
  * v0.1 phase 4 — the default tool catalog. The agent loop in
@@ -147,6 +158,17 @@ export function AgentApp({
   // was used to build the boot model; refreshed whenever the provider
   // changes (model-only switches reuse the existing key).
   const [resolvedApiKey, setResolvedApiKey] = useState<string>(model.apiKey);
+
+  // Session target (from CLI --target). Read once at mount and held
+  // stable for the whole session — switching hosts requires a fresh
+  // `gmft --target <other>` invocation. Undefined = no scope set, in
+  // which case per-call `args.target` is still format- and denylist-
+  // checked but no cross-call binding is enforced. This is the only
+  // seam between the CLI flag and the chokepoint.
+  const sessionTarget = useMemo<string | undefined>(
+    () => appProps.initialStatus?.target,
+    [appProps.initialStatus?.target],
+  );
 
   // Rebuild the live model from the current (provider, model, key, endpoint).
   // `useMemo` is sufficient — there's no async work in the rebuild
@@ -304,6 +326,8 @@ export function AgentApp({
           session: session ?? createNoopSession(),
           onSwitchModel: handleSwitchModel,
           onExit: handleExit,
+          runReport: (opts: RunReportOpts) => runReportForSession(session, opts),
+          openFile: openFileInOS,
         };
         const result = await dispatchSlash(value, ctx);
         if (result.kind === 'sent') {
@@ -330,7 +354,9 @@ export function AgentApp({
       // (not at render time, since `loadConfig` is a sync disk read).
       // The cached ref means subsequent submits reuse the gate.
       if (chokepointRef.current === null) {
-        chokepointRef.current = createChokepoint(readChokepointEnv({ cfg: loadConfig() }));
+        chokepointRef.current = createChokepoint(
+          readChokepointEnv({ cfg: loadConfig(), ...(sessionTarget ? { sessionTarget } : {}) }),
+        );
       }
       try {
         for await (const ev of runTurn({
@@ -409,4 +435,99 @@ export function AgentApp({
  */
 function createNoopSession(): SessionStore {
   return SessionStore.noop();
+}
+
+/**
+ * Resolve the current session id, returning null if there is no
+ * session (or the store is a noop). Used by `/report` to pick the
+ * findings file. Mirrors `SessionStore.currentId()` but stays
+ * private to this module so tests can inject a `noop` store.
+ */
+async function resolveSessionId(session: SessionStore | undefined): Promise<string | null> {
+  if (!session) return null;
+  return session.currentId();
+}
+
+/**
+ * Run a report tool against the current session's findings.
+ *
+ * The session id is the filename: `<baseDir>/<id>.jsonl`. If the
+ * session has no findings yet, the tools will write an empty report
+ * (no error). The `baseDir` is `session.directory` for live sessions
+ * and a throwaway temp dir for the noop store.
+ */
+async function runReportForSession(
+  session: SessionStore | undefined,
+  opts: RunReportOpts,
+): Promise<RunReportResult> {
+  const id = await resolveSessionId(session);
+  if (!id) {
+    throw new Error('No current session — start one with /session new first.');
+  }
+  // The session store is the source of truth for where the
+  // findings live. Live stores have a `directory` getter; noop
+  // stores have an empty one and the resolveSessionId branch above
+  // already returns null for them.
+  const baseDir = (session as { directory?: string }).directory;
+  if (!baseDir) {
+    throw new Error('Session store has no directory; cannot locate findings.');
+  }
+  const ctx = { cwd: process.cwd(), env: process.env, cfg: { sandbox: { mode: 'host' as const } } };
+  if (opts.format === 'pdf') {
+    const out = await reportPdfTool.run(
+      {
+        baseDir,
+        sessionId: id,
+        outputPath: opts.outputPath,
+        severityFilter: opts.severityFilter ?? 'medium',
+        includeEvidence: opts.includeEvidence ?? true,
+      },
+      ctx,
+    );
+    return {
+      path: out.path,
+      format: 'pdf',
+      findingCount: out.findingCount,
+      bytesWritten: out.bytesWritten,
+    };
+  }
+  // md / json share the `report_write` tool
+  const writeFormat: 'markdown' | 'json' = opts.format === 'json' ? 'json' : 'markdown';
+  const out = await reportWriteTool.run(
+    {
+      baseDir,
+      sessionId: id,
+      format: writeFormat,
+      outputPath: opts.outputPath,
+      severityFilter: opts.severityFilter ?? 'medium',
+      includeEvidence: opts.includeEvidence ?? true,
+    },
+    ctx,
+  );
+  return {
+    path: out.path,
+    // Slash command contract: external format is 'md', not 'markdown'.
+    format: opts.format === 'json' ? 'json' : 'md',
+    findingCount: out.findingCount,
+    bytesWritten: out.bytesWritten,
+  };
+}
+
+/**
+ * Open a file in the OS default handler. We try `xdg-open` first
+ * (Linux), then `open` (macOS), and `cmd.exe /c start` on Windows.
+ * Errors are surfaced to the caller — the slash command will fall
+ * back to a path-only reply.
+ */
+async function openFileInOS(path: string): Promise<void> {
+  const cmd = process.platform === 'darwin'
+    ? 'open'
+    : process.platform === 'win32'
+      ? 'cmd'
+      : 'xdg-open';
+  const args = process.platform === 'win32' ? ['/c', 'start', '', path] : [path];
+  // Detach: xdg-open / open exit immediately after spawning the
+  // viewer. We still `await` so we surface launch errors (binary
+  // missing, etc.) — the caller prints a friendly message.
+  await execFileAsync(cmd, args, { timeout: 5_000 });
 }

@@ -58,6 +58,9 @@ function isPrivateHost(target: string): boolean {
  *   - format `^[a-zA-Z0-9._-]+$`
  *   - not in a private network range (unless env.allowPrivateNetworks)
  *   - not in the operator-configured `denylist`
+ *   - equal to the session-level `env.sessionTarget` (when set) —
+ *     this binds the whole session to one host. `--target <host>`
+ *     sets it; subsequent tool calls must match.
  *
  * Returns `null` when the rule does not apply or all checks pass.
  */
@@ -79,6 +82,14 @@ export function checkTarget(call: ChokepointCall, env: ChokepointEnv): Decision 
   }
   if (env.denylist.includes(target)) {
     return { kind: 'deny', reason: `target "${target}" is on the chokepoint denylist` };
+  }
+  if (env.sessionTarget && env.sessionTarget !== target) {
+    return {
+      kind: 'deny',
+      reason:
+        `target "${target}" does not match session target "${env.sessionTarget}" ` +
+        `(start a new session with --target <host> to change scope)`,
+    };
   }
   return null;
 }
