@@ -4,6 +4,40 @@ All notable changes to GMFT-AI are documented here.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning: [Semantic](https://semver.org/).
 
+## [0.2.0-A.1] — 2026-06-11
+
+First slice of v0.2.A (multi-agent supervisor). Ships the rule engine
+that observes the agent loop's `AsyncIterable<AgentEvent>` and fires on
+plan quality (1), stuck/loop (2), and confidence calibration (4). The
+wrapper, postmortem, TUI surface, and schema migration are in A.2 / A.3.
+
+### Added
+- `packages/core/src/agent/supervisor-types.ts` — `SupervisorFire`
+  discriminated union (`loop-detected` | `overclaim` | `plan-issue`),
+  `SupervisorState`, `SupervisorFireRecord` (Zod-validated,
+  JSON-serializable), and the additive `supervisor-fire` /
+  `supervisor-postmortem` `AgentEvent` variants.
+- `packages/core/src/agent/supervisor-rules.ts` — pure rule engine:
+  - **Rule A** (stuck/loop): same `(toolName, argsHash)` ≥4 times in
+    the last 8 `tool-call-request` events. Fires with an
+    alt-suggestion table keyed on tool family (`nmap_*`, `whois` /
+    `dig`, `nuclei_*` / `nikto_*`, `http_get`).
+  - **Rule B** (confidence calibration): 3 sub-rules — empty-findings
+    claim, claim-without-evidence (within 2 tool calls of empty
+    result), negative-result overconfidence (port not in scan range).
+  - **Rule C** (plan quality): 3 sub-rules — no recon before
+    destructive, 3+ calls to same tool family, `targetRequired` tool
+    called without `--target` set.
+  - Helpers: `applyFire`, `resetForNewTurn`.
+- `packages/core/src/agent/loop.ts` — `tool-call-request` event
+  grows an optional `flags` field (additive; v0.1 tests unchanged).
+
+### Tests
+- 21 new tests in `supervisor-rules.test.ts` (6 Rule A + 7 Rule B +
+  6 Rule C + 2 helpers).
+- Workspace total: 395 (374 + 21). `pnpm -r test` green.
+- Typecheck clean (`pnpm -C packages/core run typecheck`).
+
 ## [0.1.0] — 2026-06-17
 
 The v0.1 release. Shipped across 6 phases + 9 amendments; the polish
