@@ -21,8 +21,9 @@
  *     (C.2), or when a targetRequired tool is called without --target set
  *     (C.3). Operates on tool-call-request events.
  *
- * Future work in this file:
- *   - `applyFire` + `resetForNewTurn` — Task 1.5
+ * Phase A.1 (this file) is complete. The wrapper that calls these helpers
+ * — applyFire / resetForNewTurn, plus the supervisor-fire / supervisor-
+ * postmortem event emission — lives in the Phase A.2 task.
  */
 
 // =============================================================================
@@ -34,7 +35,7 @@
 // is keyed on the tool-family prefix (nmap_*, whois/dig, etc.).
 
 import type { AgentEvent } from './loop.js';
-import type { SupervisorState, LoopDetectedFire, OverclaimFire, PlanIssueFire } from './supervisor-types.js';
+import type { SupervisorState, SupervisorFire, LoopDetectedFire, OverclaimFire, PlanIssueFire } from './supervisor-types.js';
 
 export const RULE_A_THRESHOLD = 4;
 export const RULE_A_WINDOW = 8;
@@ -373,4 +374,47 @@ export function observeRuleC(
   }
 
   return { state: next };
+}
+
+// =============================================================================
+// Helpers — applyFire + resetForNewTurn
+// =============================================================================
+//
+// `applyFire` is the single mutator for `firesThisTurn` — the wrapper
+// calls it after a rule returns a fire, so the rest of the rule code
+// stays free of side effects. `resetForNewTurn` rebuilds a fresh
+// per-turn state on each `done` event; it preserves the session-level
+// `chokepointSessionTarget` (set by `--target` on the CLI, lives for the
+// whole session, not just one turn).
+//
+// Note: `lastToolResult` and `lastScannedPorts` are turn-level state
+// (populated by the most recent tool-result event). Both are reset on
+// every new turn — if we left them populated, a non-empty result from
+// turn N would incorrectly continue to suppress Rule B.1 in turn N+1.
+
+export function applyFire(state: SupervisorState, fire: SupervisorFire): SupervisorState {
+  return {
+    ...state,
+    firesThisTurn: [...state.firesThisTurn, fire],
+  };
+}
+
+export function resetForNewTurn(state: SupervisorState): SupervisorState {
+  return {
+    firesThisTurn: [],
+    ruleA: { recent: [] },
+    ruleB: {
+      recentText: '',
+      toolCallsSinceLastClaim: 0,
+      lastScannedPorts: undefined,
+      lastToolResult: undefined,
+    },
+    ruleC: {
+      toolsCalledThisTurn: 0,
+      destructiveCallsThisTurn: 0,
+      reconCallsThisTurn: 0,
+      familyCallCounts: new Map(),
+      chokepointSessionTarget: state.ruleC.chokepointSessionTarget,
+    },
+  };
 }

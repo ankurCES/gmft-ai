@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { observeRuleA, observeRuleB, observeRuleC, RULE_A_THRESHOLD, RULE_A_WINDOW } from '../src/agent/supervisor-rules.js';
+import { observeRuleA, observeRuleB, observeRuleC, applyFire, resetForNewTurn, RULE_A_THRESHOLD, RULE_A_WINDOW } from '../src/agent/supervisor-rules.js';
 import { createInitialState } from '../src/agent/supervisor-types.js';
 import type { AgentEvent } from '../src/agent/loop.js';
 
@@ -281,5 +281,40 @@ describe('observeRuleC — plan quality', () => {
       flags: ['targetRequired'],
     } as unknown as AgentEvent);
     expect(r.fire).toBeUndefined();
+  });
+});
+
+describe('applyFire + resetForNewTurn', () => {
+  it('applyFire appends a fire to firesThisTurn', () => {
+    let state = createInitialState();
+    state = applyFire(state, {
+      kind: 'overclaim',
+      quote: 'q',
+      evidence: 'e',
+      advice: 'a',
+      targetEventId: 't',
+    });
+    expect(state.firesThisTurn).toHaveLength(1);
+    state = applyFire(state, {
+      kind: 'loop-detected',
+      tool: 'nmap_scan',
+      count: 4,
+      recent: ['nmap_scan'],
+      advice: 'a',
+      targetEventId: 't',
+    });
+    expect(state.firesThisTurn).toHaveLength(2);
+  });
+
+  it('resetForNewTurn clears all counters but preserves chokepointSessionTarget', () => {
+    let state = createInitialState('scanme.nmap.org');
+    state = applyFire(state, {
+      kind: 'overclaim', quote: 'q', evidence: 'e', advice: 'a', targetEventId: 't',
+    });
+    state = observeRuleA(state, toolCall('1', 'nmap_scan', { target: 'h' })).state;
+    const reset = resetForNewTurn(state);
+    expect(reset.firesThisTurn).toHaveLength(0);
+    expect(reset.ruleA.recent).toHaveLength(0);
+    expect(reset.ruleC.chokepointSessionTarget).toBe('scanme.nmap.org');
   });
 });
