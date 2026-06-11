@@ -56,7 +56,7 @@ export const WifiDeauthOutput = z.object({
   clientMac: z.string().optional(),
   iface: z.string(),
   count: z.number().int().nonnegative(),
-  mode: z.enum(['host', 'docker']),
+  mode: z.enum(['host', 'host+landlock', 'docker']),
   fellBack: z.boolean(),
   durationMs: z.number().int().nonnegative(),
   dryRun: z.boolean(),

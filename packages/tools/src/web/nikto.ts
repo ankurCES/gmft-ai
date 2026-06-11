@@ -10,7 +10,7 @@ export type NiktoInputT = z.infer<typeof NiktoInput>;
 
 export const NiktoOutput = z.object({
   findings: z.array(z.any()),
-  mode: z.enum(['host', 'docker']),
+  mode: z.enum(['host', 'host+landlock', 'docker']),
   fellBack: z.boolean(),
   durationMs: z.number(),
 });

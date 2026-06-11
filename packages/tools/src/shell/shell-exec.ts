@@ -14,7 +14,7 @@ export const ShellExecOutput = z.object({
   stderr: z.string(),
   exitCode: z.number().int(),
   durationMs: z.number().int().nonnegative(),
-  mode: z.enum(['docker', 'host']),
+  mode: z.enum(['host', 'host+landlock', 'docker']),
   fellBack: z.boolean(),
 });
 

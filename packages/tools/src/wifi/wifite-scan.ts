@@ -53,7 +53,7 @@ export const WifiteScanOutput = z.object({
   aps: z.array(WifiteScanAp),
   iface: z.string(),
   duration: z.number().int().positive(),
-  mode: z.enum(['host', 'docker']),
+  mode: z.enum(['host', 'host+landlock', 'docker']),
   fellBack: z.boolean(),
   durationMs: z.number().int().nonnegative(),
   dryRun: z.boolean(),

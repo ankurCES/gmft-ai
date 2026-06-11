@@ -21,7 +21,7 @@ export const TheHarvesterOutput = z.object({
   urls: z.array(z.string()),
   findings: z.array(z.any()),
   durationMs: z.number(),
-  mode: z.enum(['host', 'docker']),
+  mode: z.enum(['host', 'host+landlock', 'docker']),
   fellBack: z.boolean(),
 });
 export type TheHarvesterOutputT = z.infer<typeof TheHarvesterOutput>;

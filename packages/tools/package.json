@@ -21,6 +21,7 @@
   },
   "dependencies": {
     "@gmft/core": "workspace:*",
+    "@gmft/landlock-shim": "workspace:*",
     "@react-pdf/renderer": "^4.5.1",
     "react": "^18.3.1",
     "zod": "^3.23.8"

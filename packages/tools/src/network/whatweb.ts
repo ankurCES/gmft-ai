@@ -17,7 +17,7 @@ export const WhatwebOutput = z.object({
   ),
   findings: z.array(z.any()),
   durationMs: z.number(),
-  mode: z.enum(['host', 'docker']),
+  mode: z.enum(['host', 'host+landlock', 'docker']),
   fellBack: z.boolean(),
 });
 export type WhatwebOutputT = z.infer<typeof WhatwebOutput>;

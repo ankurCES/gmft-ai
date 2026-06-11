@@ -1,5 +1,8 @@
 import { spawn } from 'node:child_process';
 import { assertBinary, isPrereqCheckSkipped } from './prereq';
+import { applyLandlock } from './landlock.js';
+import { runnerCapabilities } from './capabilities.js';
+import type { LandlockApplyOpts } from './landlock.js';
 
 /**
  * Resolve a binary name to an absolute path. Currently only handles the
@@ -15,7 +18,7 @@ function resolveBin(bin: string): string {
   return bin;
 }
 
-export type RunnerMode = 'docker' | 'host';
+export type RunnerMode = 'docker' | 'host' | 'host+landlock';
 
 export interface RunOptions {
   /** Args to exec, e.g. ['echo', 'hello']. */
@@ -30,6 +33,17 @@ export interface RunOptions {
   envAllowlist?: string[];
   /** Timeout in ms. Default 30s. */
   timeoutMs?: number;
+  /**
+   * Filesystem paths the child may READ. When set in host mode AND
+   * landlock is available, the child runs under a landlock ruleset
+   * that permits read access to these paths and nothing else.
+   * When unset in host mode, landlock is not applied.
+   */
+  fsAllowRead?: string[];
+  /** Filesystem paths the child may WRITE/append/truncate. See fsAllowRead. */
+  fsAllowWrite?: string[];
+  /** Filesystem paths the child may CREATE regular files in. See fsAllowRead. */
+  fsAllowMakeReg?: string[];
 }
 
 export interface RunResult {
@@ -40,6 +54,12 @@ export interface RunResult {
   durationMs: number;
   /** True if the runner fell back from docker to host. */
   fellBack: boolean;
+  /** True if landlock was applied for this run (host+landlock mode). */
+  sandboxed?: boolean;
+  /** Landlock ABI version (1-7) when sandboxed. Undefined otherwise. */
+  landlockAbi?: number;
+  /** Resolved allowlist that was enforced. Undefined when not sandboxed. */
+  landlockPaths?: { read: string[]; write: string[]; makeReg: string[] };
 }
 
 const DEFAULT_IMAGE = process.env.GMFT_RUNNER_IMAGE ?? 'alpine:3.20';
@@ -85,7 +105,37 @@ export async function run(opts: RunOptions): Promise<RunResult> {
   if (mode === 'docker') {
     return runDocker(opts.argv, opts.image ?? DEFAULT_IMAGE, opts.cwd, env, timeoutMs, fellBack, start);
   }
-  return runHost(opts.argv, opts.cwd, env, timeoutMs, fellBack, start);
+  // Host mode: decide whether to apply landlock. Landlock is only
+  // applied when:
+  //   - the host's landlock probe reports `available`, AND
+  //   - the caller passed at least one fs allowlist (an empty
+  //     allowlist would lock the child down entirely, blocking
+  //     its own argv/libs).
+  const caps = runnerCapabilities();
+  const wantsLandlock = caps.landlock === 'available' && hasAnyAllowlist(opts);
+  return runHost(
+    opts.argv,
+    opts.cwd,
+    env,
+    timeoutMs,
+    fellBack,
+    start,
+    wantsLandlock
+      ? {
+          fsAllowRead: opts.fsAllowRead,
+          fsAllowWrite: opts.fsAllowWrite,
+          fsAllowMakeReg: opts.fsAllowMakeReg,
+        }
+      : null,
+  );
+}
+
+function hasAnyAllowlist(opts: RunOptions): boolean {
+  return (
+    (opts.fsAllowRead?.length ?? 0) > 0 ||
+    (opts.fsAllowWrite?.length ?? 0) > 0 ||
+    (opts.fsAllowMakeReg?.length ?? 0) > 0
+  );
 }
 
 function runDocker(
@@ -133,6 +183,7 @@ function runHost(
   timeoutMs: number,
   fellBack: boolean,
   start: number,
+  landlockOpts: LandlockApplyOpts | null,
 ): Promise<RunResult> {
   return new Promise<RunResult>((resolve, reject) => {
     if (argv.length === 0) {
@@ -141,7 +192,29 @@ function runHost(
     }
     const [rawBin, ...rest] = argv;
     const bin = resolveBin(rawBin!);
-    const child = spawn(bin, rest, { env, stdio: ['ignore', 'pipe', 'pipe'], shell: false });
+    // preExec runs between fork() and exec() in the child — perfect place
+    // to apply landlock rules (kernel LSM, irreversible for the child).
+    const preExec =
+      landlockOpts !== null
+        ? () => {
+            try {
+              applyLandlock(landlockOpts);
+            } catch (err) {
+              // Landlock apply failure is fatal for the child. Bail loudly
+              // via process.exit — there's no exec to return to.
+              process.stderr.write(
+                `[gmft/tools] failed to apply landlock: ${err instanceof Error ? err.message : err}\n`,
+              );
+              process.exit(126);
+            }
+          }
+        : undefined;
+    const child = spawn(bin, rest, {
+      env,
+      stdio: ['ignore', 'pipe', 'pipe'],
+      shell: false,
+      ...(preExec !== undefined ? { preExec } : {}),
+    });
     let stdout = '';
     let stderr = '';
     child.stdout.on('data', (b: Buffer) => (stdout += b.toString()));
@@ -156,13 +229,24 @@ function runHost(
     });
     child.on('close', (code) => {
       clearTimeout(timer);
+      const sandboxed = landlockOpts !== null;
+      const caps = sandboxed ? runnerCapabilities() : null;
       resolve({
-        mode: 'host',
+        mode: sandboxed ? 'host+landlock' : 'host',
         stdout,
         stderr,
         exitCode: code ?? -1,
         durationMs: Date.now() - start,
         fellBack,
+        sandboxed,
+        landlockAbi: sandboxed && caps?.landlockAbi != null ? caps.landlockAbi : undefined,
+        landlockPaths: sandboxed
+          ? {
+              read: landlockOpts.fsAllowRead ?? [],
+              write: landlockOpts.fsAllowWrite ?? [],
+              makeReg: landlockOpts.fsAllowMakeReg ?? [],
+            }
+          : undefined,
       });
     });
   });

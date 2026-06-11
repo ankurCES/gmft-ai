@@ -26,7 +26,7 @@ export const DnsenumOutput = z.object({
   mx: z.array(DnsenumMx),
   findings: z.array(z.any()),
   durationMs: z.number(),
-  mode: z.enum(['host', 'docker']),
+  mode: z.enum(['host', 'host+landlock', 'docker']),
   fellBack: z.boolean(),
 });
 export type DnsenumOutputT = z.infer<typeof DnsenumOutput>;
