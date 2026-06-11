@@ -10,10 +10,21 @@
  * (A.1). This file tests the wrapper's *integration* with the rules.
  */
 
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { withSupervisor } from '../src/agent/supervisor.js';
 import type { AgentEvent } from '../src/agent/loop.js';
 import type { ChatMessage } from '../src/agent/context.js';
+import type { SupervisorTurnRecord } from '../src/agent/supervisor-types.js';
+import type { LanguageModel } from 'ai';
+
+// Mock the `ai` SDK so `generatePostmortem`'s call to `generateText`
+// is deterministic. vi.mock is hoisted, so this takes effect for the
+// `supervisor` import below.
+vi.mock('ai', () => ({
+  generateText: vi.fn(),
+}));
+import { generateText } from 'ai';
+const mockedGenerateText = vi.mocked(generateText);
 
 async function* fakeTurn(events: AgentEvent[]): AsyncIterable<AgentEvent> {
   for (const e of events) yield e;
@@ -56,6 +67,10 @@ describe('withSupervisor — passthrough behavior', () => {
   });
 
   it('returns the post-processed SupervisorTurnRecord (fires=[]) after a turn', async () => {
+    // No model supplied => no postmortem event yielded, but lastPostmortem()
+    // is still populated with the fires-only record so the session log
+    // can append it.
+    mockedGenerateText.mockReset();
     const inner = fakeTurn([{ type: 'done', text: 'hi' }]);
     const wrapped = withSupervisor({
       runTurn: () => inner,
@@ -65,9 +80,12 @@ describe('withSupervisor — passthrough behavior', () => {
     const out: AgentEvent[] = [];
     for await (const ev of wrapped) out.push(ev);
     expect(out).toHaveLength(1);
-    // v0.2.A.2 doesn't yet emit supervisor-postmortem (that's A.3).
-    // The wrapper exposes the LAST turn's fires via `lastFires()`.
+    expect(out[0]?.type).toBe('done');
+    // v0.2.A.2 exposed `lastFires()`; v0.2.A.3 adds `lastPostmortem()`.
     expect(wrapped.lastFires()).toEqual([]);
+    expect(wrapped.lastPostmortem()).toEqual({ fires: [] });
+    // No model => no LLM call, no supervisor-postmortem event.
+    expect(mockedGenerateText).not.toHaveBeenCalled();
   });
 });
 
@@ -264,5 +282,75 @@ describe('withSupervisor — Rule B and Rule C integration', () => {
     const fireKinds = new Set(fires.map(f => f.type === 'supervisor-fire' ? f.fire.kind : null));
     expect(fireKinds.has('loop-detected')).toBe(true);
     expect(fireKinds.has('overclaim')).toBe(true);
+  });
+});
+
+describe('withSupervisor — postmortem integration (v0.2.A.3)', () => {
+  beforeEach(() => {
+    mockedGenerateText.mockReset();
+  });
+
+  it('emits a supervisor-postmortem event after the done event when model is provided', async () => {
+    mockedGenerateText.mockResolvedValue({
+      text: 'WHAT: x\nLEARNED: y\nMISSING: z\nNEXT: w',
+    } as never);
+    const postmortemReceived: SupervisorTurnRecord[] = [];
+    const inner = fakeTurn([{ type: 'done', text: 'work' }]);
+    const wrapped = withSupervisor({
+      runTurn: () => inner,
+      runTurnOpts: { model: {} as never, system: '', history: [] },
+      historyRef: { current: [] },
+      model: {} as unknown as LanguageModel,
+      turnTextRef: { current: 'work' },
+      onPostmortem: (r) => postmortemReceived.push(r),
+    });
+    const events: AgentEvent[] = [];
+    for await (const ev of wrapped) events.push(ev);
+    const postmortems = events.filter(e => e.type === 'supervisor-postmortem');
+    expect(postmortems).toHaveLength(1);
+    if (postmortems[0]?.type === 'supervisor-postmortem') {
+      expect(postmortems[0].body).toMatch(/WHAT/);
+      expect(postmortems[0].fireCount).toBe(0);
+      expect(postmortems[0].turnId).toBe('turn');
+    }
+    // onPostmortem called exactly once with a record containing the body
+    expect(postmortemReceived).toHaveLength(1);
+    expect(postmortemReceived[0]?.postmortem).toMatch(/WHAT/);
+    expect(postmortemReceived[0]?.fires).toEqual([]);
+  });
+
+  it('lastPostmortem() returns the SupervisorTurnRecord from the last turn', async () => {
+    mockedGenerateText.mockResolvedValue({
+      text: 'WHAT: x\nLEARNED: y\nMISSING: z\nNEXT: w',
+    } as never);
+    const inner = fakeTurn([{ type: 'done', text: 'x' }]);
+    const wrapped = withSupervisor({
+      runTurn: () => inner,
+      runTurnOpts: { model: {} as never, system: '', history: [] },
+      historyRef: { current: [] },
+      model: {} as unknown as LanguageModel,
+      turnTextRef: { current: 'x' },
+    });
+    for await (const _ev of wrapped) { /* drain */ }
+    const pm = wrapped.lastPostmortem();
+    expect(pm).toBeDefined();
+    expect(pm?.fires).toEqual([]);
+    expect(pm?.postmortem).toMatch(/WHAT/);
+  });
+
+  it('does not call the model if `model` is not provided (opt-out)', async () => {
+    const inner = fakeTurn([{ type: 'done', text: 'x' }]);
+    const wrapped = withSupervisor({
+      runTurn: () => inner,
+      runTurnOpts: { model: {} as never, system: '', history: [] },
+      historyRef: { current: [] },
+      // no `model` — caller opted out
+    });
+    const events: AgentEvent[] = [];
+    for await (const ev of wrapped) events.push(ev);
+    expect(events.filter(e => e.type === 'supervisor-postmortem')).toHaveLength(0);
+    expect(mockedGenerateText).not.toHaveBeenCalled();
+    // lastPostmortem is still populated with the fires-only record
+    expect(wrapped.lastPostmortem()).toEqual({ fires: [] });
   });
 });

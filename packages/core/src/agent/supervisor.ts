@@ -1,5 +1,5 @@
 /**
- * v0.2.A.2 — the `withSupervisor` wrapper.
+ * v0.2.A.2/A.3 — the `withSupervisor` wrapper.
  *
  * Observes an inner `runTurn` `AsyncIterable<AgentEvent>`, runs the 3
  * rules from `supervisor-rules.ts` on every event, and on a fire:
@@ -17,9 +17,20 @@
  *      the LLM mid-turn — it accumulates in the ref and shows up on
  *      the next turn.
  *
- * On `done` or `error`, all per-turn state is reset for the next
- * turn. The `chokepointSessionTarget` is sticky across turns (it's
- * the session target, not a per-turn thing) — `createInitialState`
+ * On `done` (v0.2.A.3), all per-turn state is reset AND a 1-shot
+ * postmortem LLM call is made via `generatePostmortem` (when a
+ * `model` is supplied). The postmortem is yielded as a
+ * `supervisor-postmortem` event and exposed via
+ * `wrapper.lastPostmortem()`. The caller can capture it (via the
+ * `onPostmortem` callback) and append it to the session log as a
+ * `SupervisorTurnRecord`.
+ *
+ * On `error`, no postmortem is generated (the turn didn't produce
+ * useful work) — fires are still snapshotted into `lastFires()` for
+ * the caller's diagnostics.
+ *
+ * The `chokepointSessionTarget` is sticky across turns (it's the
+ * session target, not a per-turn thing) — `createInitialState`
  * preserves it on every reset.
  *
  * The wrapper also exposes `lastFires()` — an accessor for the
@@ -28,18 +39,25 @@
  *
  * Design notes:
  *
- *   - We use `Object.assign(iterator, { lastFires })` so the returned
- *     value is both `AsyncIterable<AgentEvent>` (via the iterator
- *     protocol) and has a callable `lastFires` method. The cast
- *     works because `AsyncIterableIterator<T>` is duck-typed in
- *     TS — no structural mismatch to complain about.
+ *   - We use `Object.assign(iterator, { lastFires, lastPostmortem })`
+ *     so the returned value is both `AsyncIterable<AgentEvent>` (via
+ *     the iterator protocol) and has callable `lastFires` and
+ *     `lastPostmortem` methods. The cast works because
+ *     `AsyncIterableIterator<T>` is duck-typed in TS — no structural
+ *     mismatch to complain about.
  *
  *   - History mutation is immutable (`[...arr, msg]`, never `push`).
  *     This avoids aliasing bugs if a caller re-uses the same array
  *     reference somewhere else (e.g. the React state setter).
+ *
+ *   - The postmortem generator is "best effort" — a 10s timeout or
+ *     a provider error never throws out of the wrapper. The result
+ *     is always a well-formed `SupervisorTurnRecord` (possibly with
+ *     `postmortemError` set and `body: ''`).
  */
 
 import type { AgentEvent, RunTurnOpts } from './loop.js';
+import type { LanguageModel } from 'ai';
 import {
   observeRuleA,
   observeRuleB,
@@ -50,7 +68,10 @@ import {
   createInitialState,
   type SupervisorState,
   type SupervisorFire,
+  type SupervisorFireRecord,
+  type SupervisorTurnRecord,
 } from './supervisor-types.js';
+import { generatePostmortem } from './supervisor-postmortem.js';
 import type { ChatMessage } from './context.js';
 
 export interface HistoryRef {
@@ -72,15 +93,39 @@ export interface WithSupervisorOpts {
    * `createInitialState` preserves it on every per-turn reset.
    */
   chokepointSessionTarget?: string;
+  // v0.2.A.3 — postmortem generator
+  /** If supplied, generate a 1-shot postmortem LLM call on `done`. */
+  model?: LanguageModel;
+  /**
+   * Ref to the accumulated turn text (assembled by the caller from
+   * `text-delta` events). Passed to the postmortem as context. The
+   * wrapper does NOT mutate this ref — the caller owns it.
+   */
+  turnTextRef?: { current: string };
+  /** Called with the resulting `SupervisorTurnRecord` after `done`. */
+  onPostmortem?: (record: SupervisorTurnRecord) => void;
 }
 
 export interface SupervisorWrapper extends AsyncIterable<AgentEvent> {
   lastFires: () => readonly SupervisorFire[];
+  /** The `SupervisorTurnRecord` from the last `done` event, or `undefined`. */
+  lastPostmortem: () => SupervisorTurnRecord | undefined;
+}
+
+/**
+ * Map an in-memory `SupervisorFire` to a JSON-serializable
+ * `SupervisorFireRecord`. The discriminated union has identical
+ * JSON shape to the schema — the cast is a no-op, but it's the
+ * boundary marker for "this leaves the process".
+ */
+function toFireRecord(fire: SupervisorFire): SupervisorFireRecord {
+  return fire as SupervisorFireRecord;
 }
 
 export function withSupervisor(opts: WithSupervisorOpts): SupervisorWrapper {
   let state: SupervisorState = createInitialState(opts.chokepointSessionTarget);
   let lastFires: SupervisorFire[] = [];
+  let lastPostmortem: SupervisorTurnRecord | undefined;
 
   const iterator = (async function* () {
     for await (const event of opts.runTurn(opts.runTurnOpts)) {
@@ -111,12 +156,48 @@ export function withSupervisor(opts: WithSupervisorOpts): SupervisorWrapper {
       // Always yield the original event unchanged.
       yield event;
 
-      // Turn boundary: snapshot fires, then reset for the next turn.
-      // createInitialState preserves chokepointSessionTarget (the
-      // equivalent `resetForNewTurn(state)` would also preserve it
-      // if the state already had it set; the factory form is more
-      // explicit).
-      if (event.type === 'done' || event.type === 'error') {
+      // Turn boundary: snapshot fires, optionally generate a
+      // postmortem, then reset for the next turn.
+      // createInitialState preserves chokepointSessionTarget.
+      if (event.type === 'done') {
+        lastFires = state.firesThisTurn;
+        const fires = state.firesThisTurn.map(toFireRecord);
+        const turnText = opts.turnTextRef?.current ?? '';
+
+        if (opts.model) {
+          const result = await generatePostmortem({
+            fires,
+            model: opts.model,
+            turnText,
+            timeoutMs: 10_000,
+          });
+          const record: SupervisorTurnRecord = {
+            fires,
+            ...(result.body ? { postmortem: result.body } : {}),
+            ...(result.error ? { postmortemError: result.error } : {}),
+            modelUsed: 'agent-model',
+          };
+          lastPostmortem = record;
+          opts.onPostmortem?.(record);
+          yield {
+            type: 'supervisor-postmortem',
+            body: result.body,
+            turnId: 'turn',
+            fireCount: fires.length,
+          };
+        } else {
+          // No model supplied — caller opted out of the postmortem.
+          // We still record fires for the session log, but skip the
+          // LLM call entirely.
+          const record: SupervisorTurnRecord = { fires };
+          lastPostmortem = record;
+          opts.onPostmortem?.(record);
+        }
+
+        state = createInitialState(opts.chokepointSessionTarget);
+      } else if (event.type === 'error') {
+        // Error turn: snapshot fires for diagnostics, but skip the
+        // postmortem (the turn didn't produce useful work).
         lastFires = state.firesThisTurn;
         state = createInitialState(opts.chokepointSessionTarget);
       }
@@ -125,5 +206,6 @@ export function withSupervisor(opts: WithSupervisorOpts): SupervisorWrapper {
 
   return Object.assign(iterator, {
     lastFires: () => lastFires,
+    lastPostmortem: () => lastPostmortem,
   }) as SupervisorWrapper;
 }
