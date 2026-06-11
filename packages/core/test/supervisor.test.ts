@@ -187,3 +187,82 @@ describe('withSupervisor — advice injection', () => {
     expect(wrapped.lastFires()).toEqual([]);
   });
 });
+
+describe('withSupervisor — Rule B and Rule C integration', () => {
+  it('Rule B: empty-findings claim injects a Supervisor: advice message', async () => {
+    const historyRef = { current: [] as ChatMessage[] };
+    const inner = fakeTurn([
+      { type: 'text-delta', text: 'The port scan is complete.' },
+      { type: 'done', text: 'The port scan is complete.' },
+    ]);
+    const wrapped = withSupervisor({
+      runTurn: () => inner,
+      runTurnOpts: { model: {} as never, system: '', history: [] },
+      historyRef,
+      sessionFindings: [], // empty
+    });
+    const events: AgentEvent[] = [];
+    for await (const ev of wrapped) events.push(ev);
+    expect(events.filter(e => e.type === 'supervisor-fire')).toHaveLength(1);
+    expect(historyRef.current).toHaveLength(1);
+    expect(historyRef.current[0]?.content).toMatch(/no findings were written to disk/);
+  });
+
+  it('Rule C: destructive without prior recon injects a Supervisor: advice message', async () => {
+    const historyRef = { current: [] as ChatMessage[] };
+    // First call: a NON-recon tool (e.g. shell_exec) so reconCallsThisTurn
+    // stays 0. Second call: a destructive tool with the 'destructive' flag.
+    // Rule C.1 fires because the destructive call had no prior recon.
+    const inner = fakeTurn([
+      { type: 'tool-call-request', id: '1', name: 'shell_exec', args: { cmd: 'ls' } },
+      {
+        type: 'tool-call-request',
+        id: '2',
+        name: 'nuclei_run',
+        args: { target: 'h' },
+        flags: ['destructive'],
+      } as AgentEvent,
+      { type: 'done', text: '' },
+    ]);
+    const wrapped = withSupervisor({
+      runTurn: () => inner,
+      runTurnOpts: { model: {} as never, system: '', history: [] },
+      historyRef,
+    });
+    for await (const _ev of wrapped) { /* drain */ }
+    expect(historyRef.current).toHaveLength(1);
+    expect(historyRef.current[0]?.content).toMatch(/destructive tool without any prior recon/);
+  });
+
+  it('Rule A and Rule B can both fire in the same turn (history grows by N where N >= 2)', async () => {
+    const historyRef = { current: [] as ChatMessage[] };
+    // Turn: 4 nmap calls (Rule A) + C.2 also fires (3+ nmap family), then a "scan complete" text-delta (Rule B with no findings)
+    const inner = fakeTurn([
+      { type: 'tool-call-request', id: '1', name: 'nmap_scan', args: { target: 'h' } },
+      { type: 'tool-call-request', id: '2', name: 'nmap_scan', args: { target: 'h' } },
+      { type: 'tool-call-request', id: '3', name: 'nmap_scan', args: { target: 'h' } },
+      { type: 'tool-call-request', id: '4', name: 'nmap_scan', args: { target: 'h' } },
+      { type: 'text-delta', text: 'The scan is complete.' },
+      { type: 'done', text: '' },
+    ]);
+    const wrapped = withSupervisor({
+      runTurn: () => inner,
+      runTurnOpts: { model: {} as never, system: '', history: [] },
+      historyRef,
+      sessionFindings: [],
+    });
+    const events: AgentEvent[] = [];
+    for await (const ev of wrapped) events.push(ev);
+    const fires = events.filter(e => e.type === 'supervisor-fire');
+    // At least 2 fires expected: Rule A on the 4th call + Rule B on the
+    // "scan is complete" claim. Rule C.2 may also fire (3rd and 4th nmap
+    // family calls), so the actual count is higher — we only assert
+    // "at least 2" to lock in the "both can fire" contract.
+    expect(fires.length).toBeGreaterThanOrEqual(2);
+    expect(historyRef.current).toHaveLength(fires.length);
+    // Verify the two specific fires are present
+    const fireKinds = new Set(fires.map(f => f.type === 'supervisor-fire' ? f.fire.kind : null));
+    expect(fireKinds.has('loop-detected')).toBe(true);
+    expect(fireKinds.has('overclaim')).toBe(true);
+  });
+});
