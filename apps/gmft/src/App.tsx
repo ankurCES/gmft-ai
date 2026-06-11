@@ -31,6 +31,13 @@ export interface AppProps {
   onMessagesChange?: (next: Msg[]) => void;
   initialMessages?: Msg[];
   initialHistory?: string[];
+  /**
+   * Live session status. The parent (AgentApp) owns the state and
+   * updates it from the agent loop's `tool-result` events. The App
+   * just renders. `initialStatus` is still accepted for tests that
+   * don't want to manage a status ref.
+   */
+  status?: StatusInfo;
   initialStatus?: Partial<StatusInfo>;
   initialTab?: TabId;
   initialConfig?: { provider?: string; model?: string };
@@ -75,6 +82,7 @@ export function App({
   onMessagesChange,
   initialMessages = [],
   initialHistory = [],
+  status: controlledStatus,
   initialStatus = {},
   initialTab = 'chat',
   initialConfig,
@@ -159,7 +167,12 @@ export function App({
     }
   };
   const [history, setHistory] = useState<string[]>(initialHistory);
-  const [status] = useState<StatusInfo>({
+  // Live status. When the parent passes a controlled `status` (the
+  // AgentApp path), use it verbatim — the parent owns the updates.
+  // Otherwise fall back to the old behaviour: initialize from
+  // `initialStatus` and never update, which is what tests + the
+  // smoke test rely on.
+  const [internalStatus] = useState<StatusInfo>(() => ({
     model: initialConfig?.model ?? 'none',
     provider: initialConfig?.provider ?? 'none',
     sandbox: 'unknown',
@@ -167,8 +180,10 @@ export function App({
     tokensOut: 0,
     toolCalls: 0,
     findings: 0,
+    findingsBySeverity: { info: 0, low: 0, medium: 0, high: 0, critical: 0 },
     ...initialStatus,
-  });
+  }));
+  const status = controlledStatus ?? internalStatus;
 
   // Global keybindings. This hook is always active, alongside the InputBox's
   // own useInput. Multiple useInput hooks in v5 both receive every event;

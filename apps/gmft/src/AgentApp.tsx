@@ -35,8 +35,10 @@ import {
   runTurn,
   type ChatMessage,
   type CreateModelOpts,
+  type Finding,
   type LlmConfig,
   type PromptEnv,
+  type Severity,
 } from '@gmft/core';
 import {
   shellExecTool,
@@ -49,6 +51,7 @@ import {
 } from '@gmft/tools';
 import { App, type AppProps } from './App.js';
 import type { Message as Msg } from './ui/components/Message.js';
+import type { StatusInfo } from './ui/components/StatusRail.js';
 import { SessionStore } from './session/store.js';
 import {
   dispatchSlash,
@@ -169,6 +172,26 @@ export function AgentApp({
     () => appProps.initialStatus?.target,
     [appProps.initialStatus?.target],
   );
+
+  // v0.1 phase 6 — live status (toolCalls, tokens, findings, severity
+  // tally). Owned here, updated from the agent loop's `tool-result`
+  // events, and passed to App as a controlled prop. App renders the
+  // StatusRail from this object. The shape is the full StatusInfo
+  // because callers (cli.tsx, tests) initialize from `initialStatus`
+  // and the only field that changes mid-run is toolCalls/findings;
+  // model/provider/sandbox stay at their initial values for the life
+  // of the session.
+  const [status, setStatus] = useState<StatusInfo>(() => ({
+    model: appProps.initialConfig?.model ?? 'none',
+    provider: appProps.initialConfig?.provider ?? 'none',
+    sandbox: 'unknown',
+    ...(sessionTarget ? { target: sessionTarget } : {}),
+    tokensIn: 0,
+    tokensOut: 0,
+    toolCalls: 0,
+    findings: 0,
+    findingsBySeverity: { info: 0, low: 0, medium: 0, high: 0, critical: 0 },
+  }));
 
   // Rebuild the live model from the current (provider, model, key, endpoint).
   // `useMemo` is sufficient — there's no async work in the rebuild
@@ -376,6 +399,43 @@ export function AgentApp({
               content: `[error] ${ev.error.message}`,
               ts: startedAt,
             };
+          } else if (ev.type === 'tool-result') {
+            // v0.1 phase 6 — update the live status bar.
+            // 1. Always bump the tool-call counter (deny decisions
+            //    still count as a tool call from the user's POV).
+            // 2. If the tool produced findings, tally them by severity.
+            //    The `output` is `unknown`; we only trust the shape
+            //    `output.findings: Array<{ severity: string }>`. Anything
+            //    else is a no-op (the executor's extractFindings is the
+            //    authoritative path; this is a UI-side mirror that
+            //    updates faster than the sidecar fsync).
+            setStatus((prev) => {
+              const next = {
+                ...prev,
+                toolCalls: prev.toolCalls + 1,
+              };
+              if (!ev.ok || !ev.output || typeof ev.output !== 'object') {
+                return next;
+              }
+              const findings = (ev.output as { findings?: unknown }).findings;
+              if (!Array.isArray(findings) || findings.length === 0) {
+                return next;
+              }
+              const tally: Record<Severity, number> = { ...prev.findingsBySeverity };
+              let added = 0;
+              for (const f of findings) {
+                if (!f || typeof f !== 'object') continue;
+                const sev = (f as { severity?: unknown }).severity;
+                if (typeof sev !== 'string') continue;
+                if (sev !== 'info' && sev !== 'low' && sev !== 'medium' && sev !== 'high' && sev !== 'critical') {
+                  continue;
+                }
+                tally[sev] = (tally[sev] ?? 0) + 1;
+                added += 1;
+              }
+              if (added === 0) return next;
+              return { ...next, findings: prev.findings + added, findingsBySeverity: tally };
+            });
           }
         }
         const finalText = buffer || '(empty response)';
@@ -414,11 +474,7 @@ export function AgentApp({
       messages={messages}
       onMessagesChange={setMessages}
       onSubmit={handleSubmit}
-      initialStatus={{
-        ...(appProps.initialStatus ?? {}),
-        provider: activeProvider,
-        model: activeModel || 'none',
-      }}
+      status={status}
       onExit={onExit ?? handleExit}
       pendingApprovals={pendingApprovals}
       onApprovalResolve={resolveApproval}
