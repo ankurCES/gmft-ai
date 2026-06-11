@@ -82,7 +82,7 @@ export type AgentEvent =
   | { type: 'text-delta'; text: string }
   | { type: 'done'; text: string }
   | { type: 'error'; error: Error }
-  | { type: 'tool-call-request'; id: string; name: string; args: Record<string, unknown>; flags?: readonly string[] }
+  | { type: 'tool-call-request'; id: string; name: string; args: Record<string, unknown>; flags?: readonly string[] } // v0.2.A — `flags` is added for the supervisor's Rule C (destructive / targetRequired). Source of truth is the tool registry; loop emits flags when the chokepoint knows them (A.2 Task 2.4).
   | { type: 'tool-result'; id: string; name: string; ok: boolean; output?: unknown; reason?: string }
   | { type: 'confirmation-needed'; id: string; name: string; reason: string; prompt?: string }
   | { type: 'chain-started'; chainId: string; stepCount: number }

@@ -86,7 +86,6 @@ export type SupervisorState = {
     toolsCalledThisTurn: number;
     destructiveCallsThisTurn: number;
     reconCallsThisTurn: number;
-    distinctToolFamiliesThisTurn: Set<string>;
     familyCallCounts: Map<string, number>;
     chokepointSessionTarget?: string;
   };
@@ -101,7 +100,6 @@ export function createInitialState(chokepointSessionTarget?: string): Supervisor
       toolsCalledThisTurn: 0,
       destructiveCallsThisTurn: 0,
       reconCallsThisTurn: 0,
-      distinctToolFamiliesThisTurn: new Set(),
       familyCallCounts: new Map(),
       chokepointSessionTarget,
     },

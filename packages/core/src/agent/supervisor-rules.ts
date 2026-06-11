@@ -1,20 +1,27 @@
 /**
- * v0.2.A — supervisor rule engine, Rule A only.
+ * v0.2.A — supervisor rule engine: Rules A, B, C.
  *
- * Rule A detects stuck / loop behavior: the same (toolName, args) pair
- * appearing >= RULE_A_THRESHOLD times within the last RULE_A_WINDOW
- * tool-call-request events. A `loop-detected` fire is emitted on the
- * threshold-crossing call, with advice text keyed on the tool-family
- * prefix (nmap_*, whois/dig, etc.) so the suggestion is actionable.
- *
- * The function is a pure state reducer: given a `SupervisorState` and
- * an `AgentEvent`, it returns the next state and (optionally) a fire.
+ * Each rule is a pure state reducer: given a `SupervisorState` and an
+ * `AgentEvent`, it returns the next state and (optionally) a fire.
  * Side effects (event emission, session logging) are the caller's job —
  * see `applyFire` and the wrapper in Task 1.5.
  *
- * Future tasks in this file:
- *   - Rule B (overclaim detection) — Task 1.3
- *   - Rule C (turn-level chokepoint + counters) — Task 1.4
+ *   - Rule A (stuck/loop detection): the same (toolName, args) pair appears
+ *     >= RULE_A_THRESHOLD times within the last RULE_A_WINDOW tool-call-
+ *     request events. Emits a `loop-detected` fire with tool-family-keyed
+ *     advice (nmap_*, whois/dig, etc.).
+ *
+ *   - Rule B (confidence calibration): fires `overclaim` when the agent
+ *     asserts completion (B.1) or negative results (B.3) without matching
+ *     evidence, or when a "done" claim follows an empty tool result (B.2).
+ *     Operates on text-delta and tool-result events.
+ *
+ *   - Rule C (plan quality): fires `plan-issue` when destructive tools run
+ *     before any recon (C.1), when a single tool family dominates a turn
+ *     (C.2), or when a targetRequired tool is called without --target set
+ *     (C.3). Operates on tool-call-request events.
+ *
+ * Future work in this file:
  *   - `applyFire` + `resetForNewTurn` — Task 1.5
  */
 
@@ -300,11 +307,9 @@ export function observeRuleC(
   }
 
   // After the early return, TypeScript narrows `event` to the
-  // `tool-call-request` variant. The cast widens it to read the
-  // optional `flags` field; `name` and `id` are non-optional on the
-  // variant and read through normally.
-  const { name, id } = event;
-  const flags = (event as { flags?: readonly string[] }).flags;
+  // `tool-call-request` variant (which carries the optional `flags`
+  // field added in v0.2.A — see loop.ts AgentEvent union).
+  const { name, id, flags } = event;
   const isDestructive = flags?.includes('destructive') ?? false;
   const isRecon = RECON_TOOL_NAMES.has(name);
   const isTargetRequired = flags?.includes('targetRequired') ?? false;
@@ -322,10 +327,6 @@ export function observeRuleC(
       destructiveCallsThisTurn:
         state.ruleC.destructiveCallsThisTurn + (isDestructive ? 1 : 0),
       reconCallsThisTurn: state.ruleC.reconCallsThisTurn + (isRecon ? 1 : 0),
-      distinctToolFamiliesThisTurn: new Set([
-        ...state.ruleC.distinctToolFamiliesThisTurn,
-        family,
-      ]),
       familyCallCounts,
     },
   };
