@@ -4,7 +4,114 @@ All notable changes to GMFT-AI are documented here.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning: [Semantic](https://semver.org/).
 
-## [0.1.0-phase5] — 2026-06-16
+## [0.1.0] — 2026-06-17
+
+The v0.1 release. Shipped across 6 phases + 9 amendments; the polish
+branch (`v0.1.0-polish`) lands the final 7 tasks from
+[`docs/plans/2026-06-08-gmft-ai-v0.1.md`](docs/plans/2026-06-08-gmft-ai-v0.1.md)
+§11 (phases 6.1, 6.2, 6.3, 6.5, 6.6, 6.7, 6.9, 6.10, 6.11, 6.12, 6.13,
+6.14, 6.15). Phase 6's feature work (A. attack-chain, B. report +
+findings, C. more wifi, D. scope file) shipped earlier on
+[`phase6`](https://github.com/ankurCES/gmft-ai/tree/phase6).
+
+### Added (polish delta)
+
+- **CLI `--target <host>`** flag — pins the whole session to one host.
+  The chokepoint denies any `targetRequired` tool call whose
+  `args.target` doesn't match with a "scope mismatch" reason. The
+  strongest session-binding gmft v0.1 offers. See
+  [`docs/safety.md`](docs/safety.md) §2.
+- **CLI `--resume <id>`** flag — loads a specific session by id and
+  updates the current-session pointer so subsequent `gmft` runs
+  start there. Falls back to the pointer with a warning if the
+  requested id has no log.
+- **`/report [md|json|pdf] [path]`** slash command — writes a
+  report from the current session's findings sidecar. `pdf` also
+  opens the file with `xdg-open` (or `open` on macOS, `start` on
+  win32).
+- **`report_write` JSON format** + `includeEvidence` flag — the
+  `report_write` tool now emits markdown, JSON, or HTML. JSON is
+  the canonical machine-readable form; the `includeEvidence: false`
+  flag strips the per-finding evidence field for at-a-glance review.
+- **`report_pdf` tool** — renders the current session's findings
+  to a PDF using `@react-pdf/renderer`. Sibling to `report_write`,
+  not a format flag on it (each renderer is single-purpose; the
+  catalog lists both).
+- **StatusRail severity sparkline** — the status rail's "findings"
+  field is now a stacked bar of finding counts by severity
+  (`info:█ low:██ medium:█ high:███ critical:█`), updated live
+  from the agent loop's `tool-result` events. Empty tally renders
+  as `(none)`. The pure render (`renderSeveritySparkline`) is
+  exported for testability.
+- **CI drift detector** — `scripts/check-tools.mjs` greps the
+  catalog at build time and fails if a tool's name/category/flags
+  drift from `docs/tool-catalog.md`. Wired into `.github/workflows/ci.yml`.
+- **`docs/safety.md`** — full threat model: chokepoint rule order,
+  what it does not catch, the operator switches and their risks,
+  audit log shape, hardening checklist, the 9-row threat model
+  table, the safety-bug reporting flow.
+- **`docs/tool-catalog.md`** — per-tool operator reference: name,
+  category, flags, input schema, output shape, prereqs for all 15
+  tools. Includes a "what's not in v0.1" deferral list.
+- **`CONTRIBUTING.md`** — the "one rule" is `pnpm -r test` must be
+  green; the tool-add recipe (source + catalog entry + test);
+  slash-command recipe; ADR convention; PR flow.
+- **README rewrite** — mission, ⚠ legal, quickstart, the
+  `--target scanme.nmap.org` safe-demo, the full CLI flag table,
+  the slash-command table, the 15-tool quick reference, project
+  layout, testing instructions, contributing pointer.
+
+### Chokepoint delta (this branch)
+
+- New `ChokepointEnv.sessionTarget?: string` field. Set by the
+  CLI's `--target` flag; the chokepoint's `checkTarget` rule now
+  compares `args.target` against it and denies on mismatch with a
+  human-readable reason that names both the requested and the
+  session target.
+- `readChokepointEnv` accepts `sessionTarget?` and propagates it
+  to the env object.
+- 7 new chokepoint tests cover the new rule + the `readChokepointEnv`
+  round-trip. The rule order is unchanged (still
+  `elevation → typeToConfirm → destructive → target → allow`); the
+  `checkTarget` function grew one new check at the end.
+
+### Tests
+
+- 374 tests green across 4 packages
+  (1 testkit + 148 core + 106 tools + 119 gmft).
+- Phase-6-polish delta: +5 chokepoint tests (session-target),
+  +2 report-write tests (JSON, includeEvidence), +7 report-pdf
+  tests, +9 slash-command tests, +8 StatusRail tests, +0
+  App/AgentApp tests (the status-lift change is exercised through
+  the existing slash + e2e tests).
+
+### Changed
+
+- `@gmft/tools` version `0.1.0-phase3` → `0.1.0` (was already
+  `private: true`; the bump is cosmetic for the in-monorepo
+  consumer).
+- `App` is now a controlled component for `status` (in addition to
+  `messages`); `AgentApp` owns the live status and updates it
+  from the agent loop's `tool-result` events. Existing `App` tests
+  continue to work because `internalStatus` is the default when
+  no controlled `status` is passed.
+- The `cli.tsx` `--target` help text expanded (no more "lands in
+  phase 6" stub).
+
+### Hardening notes
+
+- The chokepoint's `sessionTarget` is a runtime-evaluated field;
+  switching hosts in a running session is not possible by design
+  (you'd need a fresh `gmft --target <other>`).
+- `report_pdf` uses `@react-pdf/renderer` which runs in pure
+  Node — no headless browser, no network, no font fetch. The
+  font is bundled with `@react-pdf/renderer` itself.
+- The CLI's PDF "open with xdg-open" step is best-effort; a
+  failure to launch the OS handler does not fail the slash
+  command (the file was written; the user can open it from the
+  slash-reply path).
+
+## [0.1.0-phase6] — 2026-06-17
 
 Adds the web-app pentest and wifi-evil-twin tool families, a new
 chokepoint `type-then-confirm` decision kind for high-friction tools

@@ -1,6 +1,6 @@
 {
   "name": "@gmft/tools",
-  "version": "0.1.0-phase3",
+  "version": "0.1.0",
   "private": true,
   "type": "module",
   "main": "./dist/index.js",
