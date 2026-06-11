@@ -33,6 +33,7 @@ import {
   readChokepointEnv,
   loadConfig,
   runTurn,
+  withSupervisor,
   type ChatMessage,
   type CreateModelOpts,
   type Finding,
@@ -300,6 +301,15 @@ export function AgentApp({
   // path (its runTurn is mocked).
   const chokepointRef = useRef<ReturnType<typeof createChokepoint> | null>(null);
 
+  // v0.2.A.2 — the supervisor's advice injection needs the SAME array
+  // to be visible to both the inner `runTurn` and the next user turn.
+  // The wrapper does `historyRef.current = [...historyRef.current, msg]`
+  // (immutable reassignment, never in-place push) so the next submit
+  // sees the supervisor's accumulated advice. v0.1 passed
+  // `history: [userMsg]` (a fresh array) which would have lost any
+  // advice the supervisor pushed during the turn.
+  const historyRef = useRef<ChatMessage[]>([]);
+
   const onConfirmation = useCallback(
     async (call: { id: string; name: string; args: Record<string, unknown>; reason: string; prompt?: string }): Promise<boolean> => {
       return new Promise<boolean>((resolve) => {
@@ -382,14 +392,37 @@ export function AgentApp({
         );
       }
       try {
-        for await (const ev of runTurn({
-          model: llmModel,
-          system,
-          history: [userMsg],
-          onConfirmation,
-          tools: DEFAULT_TOOLS,
-          chokepoint: chokepointRef.current,
-        })) {
+        // v0.2.A.2 — push the user message into the shared history ref
+        // so the supervisor's advice (added during the turn) flows
+        // into the next turn's `runTurn` call. The wrapper around
+        // `runTurn` observes the event stream, runs the 3 rules, and
+        // on a fire: (a) yields a `supervisor-fire` event the TUI can
+        // render, and (b) pushes a `role: 'user'` advice message into
+        // `historyRef.current`.
+        historyRef.current = [...historyRef.current, userMsg];
+        const wrapped = withSupervisor({
+          runTurn: (opts) => runTurn(opts),
+          runTurnOpts: {
+            model: llmModel,
+            system,
+            history: historyRef.current,
+            onConfirmation,
+            tools: DEFAULT_TOOLS,
+            chokepoint: chokepointRef.current,
+          },
+          historyRef,
+          // Session-level findings aren't yet wired through AgentApp's
+          // session store (A.3 work). Pass `undefined` so Rule B uses
+          // an empty array internally and degrades gracefully.
+          sessionFindings: undefined,
+          // chokepointSessionTarget is read once at chokepoint build
+          // time (line 380) and lives in chokepointRef.current's config.
+          // The supervisor's Rule C.3 only consults this for the
+          // `targetRequired` flag, which no current tool uses, so
+          // passing undefined is safe for A.2.
+          chokepointSessionTarget: undefined,
+        });
+        for await (const ev of wrapped) {
           if (ev.type === 'text-delta') {
             buffer += ev.text;
           } else if (ev.type === 'error') {
