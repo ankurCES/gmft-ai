@@ -101,7 +101,10 @@ export {
 
 export {
   execute,
+  runInner,
   type ExecuteCall,
   type ExecuteResult,
   type ExecuteOpts,
+  type RunInnerOpts,
 } from './tools/executor.js';
+export { type InnerRunner, type InnerRunnerResult } from './tools/types.js';

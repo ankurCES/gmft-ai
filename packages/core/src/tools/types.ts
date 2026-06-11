@@ -12,6 +12,36 @@
 
 import type { z } from 'zod';
 
+/**
+ * v0.1 phase 6 — `InnerRunner` is the seam the `attack_chain` tool
+ * uses to recurse into the chokepoint + dispatch pipeline for each of
+ * its sub-steps. The executor constructs the closure; the chain tool
+ * just calls it.
+ *
+ * Returned shape mirrors `ExecuteResult` from `./executor.js` but is
+ * declared here (structurally) to avoid a `types.ts ↔ executor.ts`
+ * import cycle.
+ */
+export interface InnerRunnerResult {
+  ok: boolean;
+  output?: unknown;
+  reason?: string;
+  /** True when the chokepoint denied (or user rejected confirmation). */
+  denied?: boolean;
+  /** Set when the tool runner threw. */
+  error?: string;
+  /** Findings extracted from the tool's output (auto-appended to the store). */
+  findings?: readonly import('../findings/index.js').Finding[];
+  /** Per-step result status, for the attack_chain state machine. */
+  status?: 'ok' | 'denied' | 'erred' | 'skipped';
+}
+
+export type InnerRunner = (
+  tool: string,
+  args: Record<string, unknown>,
+  opts?: { suppressTypeToConfirm?: boolean },
+) => Promise<InnerRunnerResult>;
+
 export type ToolCategory =
   | 'shell'   // run commands (sandboxed or host)
   | 'http'    // make HTTP requests
@@ -67,4 +97,16 @@ export interface ToolContext {
   cwd: string;
   env: NodeJS.ProcessEnv;
   cfg: { sandbox: { mode: 'docker' | 'host'; defaultImage?: string } };
+  /**
+   * v0.1 phase 6 — optional inner runner. Set by `runInner` (executor)
+   * when dispatching a tool that orchestrates sub-tools (the only such
+   * tool today is `attack_chain`). Calling this recurses through the
+   * chokepoint + audit pipeline with the per-call state (findings
+   * store, confirmation handler) preserved.
+   *
+   * Tools that don't need it (most) simply ignore it. The field is
+   * optional so the existing tools (nmap, nikto, etc.) keep working
+   * unchanged.
+   */
+  innerRunner?: InnerRunner;
 }
