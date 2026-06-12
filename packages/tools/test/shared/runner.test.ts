@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { pickRunnerMode, run } from '../../src/shared/runner';
+import { pickRunnerMode, run } from '../../src/shared/runner.js';
 
 describe('pickRunnerMode', () => {
   const original = process.env.GMFT_SKIP_PREREQ;

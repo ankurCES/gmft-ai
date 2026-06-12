@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import type { Tool, ToolContext } from '@gmft/core';
-import { run } from '../shared/runner';
+import { run } from '../shared/runner.js';
 
 export const ShellExecInput = z.object({
   argv: z.array(z.string()).min(1).describe('Args to execute. No shell, no chaining.'),

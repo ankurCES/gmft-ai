@@ -13,6 +13,18 @@ export interface ChatMessage {
   content: string;
   /** Optional timestamp (epoch ms). Used by the session-log replayer. */
   ts?: number;
+  /**
+   * v0.3.A — runtime event-stream ids observed *during* this assistant
+   * message's turn (e.g. tool-call-request ids). Used by the TUI to
+   * match `SupervisorFire.targetEventId` back to a transcript line so
+   * the marker renders next to the right tool call. Optional because
+   * legacy history files (and the `user` / `system` / `tool` messages
+   * the supervisor pushes as advice) don't carry event ids. The
+   * supervisor code in `loop.ts` copies this field on the assistant
+   * message it appends; user/tool/system messages get a `[]` snapshot
+   * (or undefined) so the field is uniform across the array.
+   */
+  eventIds?: string[];
 }
 
 /**

@@ -10,6 +10,14 @@ export interface Message {
   ts: number;
   /** When role === 'tool', the tool call this is a result for. */
   toolCallId?: string;
+  /**
+   * v0.3.A — the runtime event-stream ids that were observed *during*
+   * this message's turn. Used to attach `SupervisorFireMarker` lines
+   * to the right transcript entry (the supervisor fires carry a
+   * `targetEventId` referencing one of these). Optional for backwards
+   * compat with v0.1/v0.2 history files that don't track event ids.
+   */
+  eventIds?: string[];
 }
 
 export function renderRole(role: Role, theme: Theme): string {

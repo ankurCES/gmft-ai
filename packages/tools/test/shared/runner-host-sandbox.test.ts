@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { run } from '../../src/shared/runner';
-import { setCapabilitiesForTest, resetCapabilitiesForTest, type RunnerCapabilities } from '../../src/shared/capabilities';
+import { run } from '../../src/shared/runner.js';
+import { setCapabilitiesForTest, resetCapabilitiesForTest, type RunnerCapabilities } from '../../src/shared/capabilities.js';
 
 describe('run (host+landlock integration)', () => {
   beforeEach(() => resetCapabilitiesForTest());

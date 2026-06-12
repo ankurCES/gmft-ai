@@ -8,9 +8,9 @@ vi.mock('../../src/shared/prereq', () => ({
   assertBinary: vi.fn(),
 }));
 
-import { evilTwinTool } from '../../src/wifi/evil-twin';
-import { run } from '../../src/shared/runner';
-import { assertBinary } from '../../src/shared/prereq';
+import { evilTwinTool } from '../../src/wifi/evil-twin.js';
+import { run } from '../../src/shared/runner.js';
+import { assertBinary } from '../../src/shared/prereq.js';
 
 describe('evil_twin tool (destructive + requiresElevation)', () => {
   beforeEach(() => {

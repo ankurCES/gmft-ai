@@ -11,8 +11,8 @@ vi.mock('../../src/shared/runner', () => ({
   })),
 }));
 
-import { theHarvesterTool } from '../../src/network/theharvester';
-import { run } from '../../src/shared/runner';
+import { theHarvesterTool } from '../../src/network/theharvester.js';
+import { run } from '../../src/shared/runner.js';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 

@@ -4,6 +4,154 @@ All notable changes to GMFT-AI are documented here.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning: [Semantic](https://semver.org/).
 
+## [0.3.0-A] — 2026-06-17
+
+**v0.3.A slice — run-polish.** Ships the first stable `run-polish`
+build (A.1) and completes the v0.2.A.2 / v0.2.A.3 supervisor work
+that the TUI needed to actually fire in production (A.2–A.4),
+with an ADR capturing the 4 implementation decisions (A.5).
+Closes the "postmortem never runs" gap from v0.2.A.3.
+
+### Changes
+
+- **A.1.1** — `dist/` runtime is NodeNext + `.js` import
+  suffixes, not a bundler. Fixes the v0.2-era `ERR_MODULE_NOT_FOUND`
+  crash on `node ./dist/cli.js`. See `[0.3.0-A.1]` for full
+  A.1.1 details (82 suffixes, tsconfig `NodeNext`, CJS-shim cast
+  fix, fs top-level import). Bundler adoption deferred to a
+  follow-up (phase 6 ended up shipping `bundle.js`).
+- **A.1.4** — CI smoke test runs `node ./dist/cli.js --help`
+  on every PR, so a regression to the A.1.1 fix is caught
+  before merge.
+- **A.2** — `SupervisorFireMarker` wiring into ChatTab via
+  per-turn `eventIds` + session-wide `supervisorFires`. AgentApp
+  accumulates fires; ChatTab matches each fire's `targetEventId`
+  against the assistant message's `eventIds` and slots a marker
+  after the matching line. Closes the v0.2.A.2 "marker never
+  renders" gap.
+- **A.3** — `--supervisor-model <id>` CLI flag, plumbed through
+  `AgentApp` as `supervisorModelId` and into `withSupervisor` as
+  the new `modelId?` opt. AgentApp builds a second `createModel`
+  call that reuses the primary's `provider` / `apiKey` /
+  `endpoint` and swaps in the override model id. The
+  `SupervisorTurnRecord.modelUsed` field is no longer a
+  hard-coded `'agent-model'` lie; it now reflects the actual
+  model that produced the postmortem. This is the first time
+  the supervisor postmortem fires in production.
+- **A.4** — `AuditLogTab`: a 4th tab in the TUI (Chat /
+  Findings / Help / **Audit**) that paginates, filters by
+  `kind`, and color-codes the session's `AgentEvent` log.
+  Keybindings: `n` (next page), `p` (prev page), `f` (cycle
+  the kind filter). Default page size 50. AgentApp accumulates
+  every event the loop yields into a `useState<AgentEvent[]>`
+  and threads it to `<App auditEvents={...} />`.
+- **A.5** — ADR-0012 documents the 4 decisions: dist runtime
+  approach, marker wiring model, supervisor-model opt-out, and
+  audit viewer tab placement.
+
+### Verification
+
+- `pnpm -r build` — clean.
+- `pnpm -r typecheck` — clean.
+- `pnpm -r test` — 536/536 passing
+  (16 native-shim + 1 testkit + 213 core + 136 tools + 170 gmft).
+- `node ./apps/gmft/dist/cli.js --help` — works (CI smoke).
+- `node ./apps/gmft/dist/cli.js --supervisor-model claude-haiku-4-5 --help`
+  — works, flag documented in help text.
+
+### Migration notes
+
+- The Tab / Shift-Tab cycle in `app-e2e.test.tsx` was
+  hard-coded to 3 tabs and has been updated to the new 4-tab
+  cycle (Chat→Findings→Help→Audit→Chat and reverse). Any
+  external test that asserts the cycle length must also
+  update.
+- `--supervisor-model` is additive and opt-in. Existing
+  sessions that don't pass the flag use the primary model
+  for the postmortem (same behavior as v0.2.A.3, but now
+  the `modelUsed` field on the `SupervisorTurnRecord` is
+  accurate).
+
+### Known issues
+
+- `stream.test.ts > spawnStreaming > fires onStdout multiple
+  times for chunked output` remains a flaky test (1% failure
+  on slow CI). v0.2 `setImmediate` fix and the A.4 audit
+  viewer's deterministic-render test don't address it. Track
+  for a future phase.
+
+## [0.3.0-A.1] — 2026-06-17
+
+**v0.3.A slice 1 — dist runtime fix.** Fixes the long-standing
+v0.2 bug where `node ./dist/cli.js` (or `gmft` after install)
+crashed immediately with `ERR_MODULE_NOT_FOUND` because the
+`@gmft/tools` package's compiled JS still imported sibling
+modules without the `.js` extension that native ESM resolution
+requires. Bundler-style resolution worked for vitest+esbuild,
+but `node` (which is what runs the published CLI) does not.
+
+### Changes
+
+- **A.1.1** — Added `.js` extensions to 82 relative
+  `import`/`export` specifiers across 46 source + test files
+  in `packages/tools/src/`, `packages/tools/test/`. Generated
+  `packages/core/src/` and `apps/gmft/src/` were already
+  extension-complete.
+- **A.1.2** — Switched `module` and `moduleResolution` in
+  `tsconfig.base.json` from `ESNext`/`Bundler` to `NodeNext`.
+  This makes `tsc` enforce the same resolution rules the
+  runtime will see, catching missing extensions at build time
+  instead of runtime.
+- **A.1.3** — `dist/cli.js` now runs with plain `node`; the
+  `start` script and `bin: gmft → ./dist/cli.js` work
+  end-to-end. **No code change required**: both already
+  pointed at the right path; they were just broken because
+  the emitted JS couldn't resolve.
+- **Cross-shim cast fix** — `@gmft/landlock-shim` and
+  `@gmft/seccomp-shim` are CJS modules (`module.exports =
+  require('./build/Release/*.node')`). Under NodeNext,
+  `import * as shim` sees a namespace whose shape doesn't
+  structurally match the inline `as { ... }` cast. Tightened
+  the three call sites in `landlock.ts` and `seccomp.ts` to
+  `as unknown as { ... }` (the canonical NodeNext escape
+  hatch). No runtime change.
+- **Test fix** — `packages/core/test/session-paths.test.ts`
+  had a `require('node:fs')` to avoid a top-level import.
+  Under NodeNext that becomes a compile error. Moved
+  `existsSync` to the top-level import.
+
+### Verification
+
+- `pnpm -r build` — clean (7/7 packages).
+- `pnpm -r test` — 497/497 passing
+  (1 testkit + 211 core + 136 tools + 149 gmft).
+- `pnpm -r typecheck` — clean (6/6).
+- `node ./apps/gmft/dist/cli.js --help` — works.
+- `node ./apps/gmft/dist/cli.js --version` — `0.1.0`.
+- `node ./apps/gmft/dist/cli.js --target test` — runs the
+  full TUI boot (fails on the expected `anthropic requires
+  apiKey` runtime error, which is **after** the module
+  resolution that was previously crashing).
+
+### Migration notes
+
+- Anyone consuming `@gmft/tools` from a native-ESM context
+  (Node 18+, no bundler) will now see the `.js` extensions
+  in the emitted `dist/`. That is the spec-correct form
+  and is what the spec says you should do.
+- The change to `tsconfig.base.json` is a **monorepo-wide
+  tightening**. New TS code in any package must now use
+  `.js` extensions on relative imports.
+
+### Known issues (unchanged from v0.2)
+
+- `stream.test.ts > spawnStreaming > fires onStdout multiple
+  times for chunked output` is a flaky test that fails
+  ~1% of the time on slow CI. The v0.2 `setImmediate` fix
+  helps but doesn't eliminate it. Tracked in v0.3.A scope
+  (the supervisor audit-viewer work in A.2.3 will write a
+  more deterministic test).
+
 ## [0.2.0] — 2026-06-17
 
 First 0.2 release. Aggregates the v0.2.A (multi-agent

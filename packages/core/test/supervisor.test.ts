@@ -353,4 +353,47 @@ describe('withSupervisor — postmortem integration (v0.2.A.3)', () => {
     // lastPostmortem is still populated with the fires-only record
     expect(wrapped.lastPostmortem()).toEqual({ fires: [] });
   });
+
+  // v0.3.A.3 — `modelId` opt must flow through to the
+  // SupervisorTurnRecord.modelUsed so post-session review can tell
+  // which model produced the postmortem. This closes the v0.2.A.3
+  // gap where the record hard-coded 'agent-model' regardless of the
+  // caller's actual choice.
+  it('records the caller-provided modelId on the SupervisorTurnRecord (v0.3.A.3)', async () => {
+    mockedGenerateText.mockResolvedValue({
+      text: 'WHAT: x\nLEARNED: y\nMISSING: z\nNEXT: w',
+    } as never);
+    const inner = fakeTurn([{ type: 'done', text: 'x' }]);
+    const wrapped = withSupervisor({
+      runTurn: () => inner,
+      runTurnOpts: { model: {} as never, system: '', history: [] },
+      historyRef: { current: [] },
+      model: {} as unknown as LanguageModel,
+      modelId: 'claude-haiku-4-5',
+      turnTextRef: { current: 'x' },
+    });
+    for await (const _ev of wrapped) { /* drain */ }
+    const pm = wrapped.lastPostmortem();
+    expect(pm).toBeDefined();
+    expect(pm?.modelUsed).toBe('claude-haiku-4-5');
+  });
+
+  it('falls back to "agent-model" on the SupervisorTurnRecord when modelId is omitted (v0.3.A.3)', async () => {
+    mockedGenerateText.mockResolvedValue({
+      text: 'WHAT: x\nLEARNED: y\nMISSING: z\nNEXT: w',
+    } as never);
+    const inner = fakeTurn([{ type: 'done', text: 'x' }]);
+    const wrapped = withSupervisor({
+      runTurn: () => inner,
+      runTurnOpts: { model: {} as never, system: '', history: [] },
+      historyRef: { current: [] },
+      model: {} as unknown as LanguageModel,
+      turnTextRef: { current: 'x' },
+      // no `modelId` — must fall back to 'agent-model'
+    });
+    for await (const _ev of wrapped) { /* drain */ }
+    const pm = wrapped.lastPostmortem();
+    expect(pm).toBeDefined();
+    expect(pm?.modelUsed).toBe('agent-model');
+  });
 });

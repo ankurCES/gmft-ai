@@ -6,8 +6,8 @@ vi.mock('../../src/shared/runner', () => ({
   run: vi.fn(),
 }));
 
-import { nucleiTool, parseNucleiNdjson } from '../../src/web/nuclei';
-import { run } from '../../src/shared/runner';
+import { nucleiTool, parseNucleiNdjson } from '../../src/web/nuclei.js';
+import { run } from '../../src/shared/runner.js';
 
 const FIXTURE = readFileSync(
   join(__dirname, 'fixtures/nuclei-sample.ndjson'),

@@ -11,8 +11,8 @@ vi.mock('../../src/shared/runner', () => ({
   })),
 }));
 
-import { nmapTool } from '../../src/network/nmap';
-import { run } from '../../src/shared/runner';
+import { nmapTool } from '../../src/network/nmap.js';
+import { run } from '../../src/shared/runner.js';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 

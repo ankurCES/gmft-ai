@@ -4,7 +4,7 @@ import {
   applySeccomp,
   buildSeccompBpf,
   _resetSeccompForTest,
-} from '../../src/shared/seccomp';
+} from '../../src/shared/seccomp.js';
 
 describe('seccompAvailable', () => {
   beforeEach(() => _resetSeccompForTest());

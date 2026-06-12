@@ -97,6 +97,13 @@ export interface WithSupervisorOpts {
   /** If supplied, generate a 1-shot postmortem LLM call on `done`. */
   model?: LanguageModel;
   /**
+   * v0.3.A.3 — the model id used for the postmortem. Recorded in
+   * `SupervisorTurnRecord.modelUsed` so post-session review can tell
+   * whether the postmortem used the primary agent model or a separate
+   * supervisor override (the `--supervisor-model` CLI flag).
+   */
+  modelId?: string;
+  /**
    * Ref to the accumulated turn text (assembled by the caller from
    * `text-delta` events). Passed to the postmortem as context. The
    * wrapper does NOT mutate this ref — the caller owns it.
@@ -175,7 +182,12 @@ export function withSupervisor(opts: WithSupervisorOpts): SupervisorWrapper {
             fires,
             ...(result.body ? { postmortem: result.body } : {}),
             ...(result.error ? { postmortemError: result.error } : {}),
-            modelUsed: 'agent-model',
+            // v0.3.A.3 — record the actual model id used for the
+            // postmortem so session-log review can tell whether the
+            // primary agent model or the override (--supervisor-model)
+            // generated it. Falls back to the legacy 'agent-model'
+            // literal for callers that don't pass modelId.
+            modelUsed: opts.modelId ?? 'agent-model',
           };
           lastPostmortem = record;
           opts.onPostmortem?.(record);

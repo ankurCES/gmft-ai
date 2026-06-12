@@ -11,8 +11,8 @@ vi.mock('../../src/shared/runner', () => ({
   })),
 }));
 
-import { dnsenumTool } from '../../src/network/dnsenum';
-import { run } from '../../src/shared/runner';
+import { dnsenumTool } from '../../src/network/dnsenum.js';
+import { run } from '../../src/shared/runner.js';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 

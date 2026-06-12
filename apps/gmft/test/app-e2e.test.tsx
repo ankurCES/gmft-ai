@@ -169,7 +169,7 @@ describe('App (e2e)', () => {
     expect(lastFrame() ?? '').toContain('alpha');
   });
 
-  it('Tab cycles Chat -> Findings -> Help -> Chat', async () => {
+  it('Tab cycles Chat -> Findings -> Help -> Audit -> Chat', async () => {
     const { stdin, lastFrame } = await renderApp();
     // Default is chat; the tab bar should show "Chat" as active.
     expect(lastFrame() ?? '').toContain('▸ Chat');
@@ -184,23 +184,36 @@ describe('App (e2e)', () => {
     expect(lastFrame() ?? '').toContain('▸ Help');
     expect(lastFrame() ?? '').toContain('Keybindings');
 
+    // v0.3.A.4 — the audit tab was added at the end of TAB_ORDER.
+    stdin.write('\t'); // Tab -> Audit
+    await tick();
+    expect(lastFrame() ?? '').toContain('▸ Audit');
+    expect(lastFrame() ?? '').toContain('Audit Log');
+
     stdin.write('\t'); // Tab -> wraps back to Chat
     await tick();
     expect(lastFrame() ?? '').toContain('▸ Chat');
   });
 
-  it('Shift-Tab cycles backwards Help -> Findings -> Chat', async () => {
+  it('Shift-Tab cycles backwards Help -> Findings -> Chat -> Audit', async () => {
     const { stdin, lastFrame } = await renderApp({ initialTab: 'help' });
     expect(lastFrame() ?? '').toContain('▸ Help');
 
     // Shift-Tab is ESC [ Z in xterm.
     stdin.write('\u001B[Z');
     await tick();
+    // v0.3.A.4 — TAB_ORDER is ['chat','findings','help','audit'].
+    // Reverse from `help` (idx 2) goes to idx 1 = 'findings'.
     expect(lastFrame() ?? '').toContain('▸ Findings');
 
     stdin.write('\u001B[Z');
     await tick();
     expect(lastFrame() ?? '').toContain('▸ Chat');
+
+    stdin.write('\u001B[Z');
+    await tick();
+    // Wrap: from 'chat' (idx 0) reverse goes to last = 'audit'.
+    expect(lastFrame() ?? '').toContain('▸ Audit');
   });
 
   it('Ctrl-C calls onExit', async () => {

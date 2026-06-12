@@ -48,6 +48,10 @@ const cli = meow(
                                  unless GMFT_ALLOW_UNSANDBOXED_DESTRUCTIVE=true
                                  for destructive/elevated tools)
     --resume <id>       Resume a specific session id (skips the current-session pointer)
+    --supervisor-model <id>  Model id for the supervisor's end-of-turn postmortem.
+                        Default: same as the primary agent model. Useful with
+                        cheaper/local models (e.g. claude-haiku-4-5, ollama)
+                        since the postmortem is a fixed-prompt 4-section task.
     --help              Show this help
     --version           Show version
 
@@ -57,6 +61,7 @@ const cli = meow(
     $ gmft --theme dark
     $ gmft --sandbox docker
     $ gmft --resume 20260611-094512-abcdef
+    $ gmft --supervisor-model claude-haiku-4-5
 `,
   {
     importMeta: import.meta,
@@ -66,6 +71,7 @@ const cli = meow(
       target: { type: 'string' },
       resume: { type: 'string' },
       sandbox: { type: 'string', default: 'auto' },
+      supervisorModel: { type: 'string' },
     },
   },
 );
@@ -272,6 +278,9 @@ const { waitUntilExit } = render(
     },
     session,
     ...(initialMessages.length > 0 ? { initialMessages } : {}),
+    ...(cli.flags.supervisorModel
+      ? { supervisorModelId: cli.flags.supervisorModel }
+      : {}),
     onTurnComplete: ({ user, assistant }) => {
       // Persist both halves of the turn. The store is async but the
       // TUI's onTurnComplete is fire-and-forget here — we log on

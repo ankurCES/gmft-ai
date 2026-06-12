@@ -1,12 +1,13 @@
 import { Box, Text } from 'ink';
 import type { Theme } from '../theme.js';
 
-export type TabId = 'chat' | 'findings' | 'help';
+export type TabId = 'chat' | 'findings' | 'help' | 'audit';
 
 const TABS: { id: TabId; label: string }[] = [
   { id: 'chat', label: 'Chat' },
   { id: 'findings', label: 'Findings' },
   { id: 'help', label: 'Help' },
+  { id: 'audit', label: 'Audit' },
 ];
 
 export function TabBar({ active, theme }: { active: TabId; theme: Theme }): React.JSX.Element {

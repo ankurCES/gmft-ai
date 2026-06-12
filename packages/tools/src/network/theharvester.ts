@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { run } from '../shared/runner';
+import { run } from '../shared/runner.js';
 import type { Tool, ToolContext, Finding } from '@gmft/core';
 
 export const TheHarvesterInput = z.object({

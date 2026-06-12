@@ -6,8 +6,8 @@ vi.mock('../../src/shared/runner', () => ({
   run: vi.fn(),
 }));
 
-import { niktoTool, parseNiktoText } from '../../src/web/nikto';
-import { run } from '../../src/shared/runner';
+import { niktoTool, parseNiktoText } from '../../src/web/nikto.js';
+import { run } from '../../src/shared/runner.js';
 
 const FIXTURE = readFileSync(
   join(__dirname, 'fixtures/nikto-sample.txt'),

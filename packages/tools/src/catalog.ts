@@ -1,17 +1,17 @@
-import { shellExecTool } from './shell/shell-exec';
-import { nmapTool } from './network/nmap';
-import { dnsenumTool } from './network/dnsenum';
-import { theHarvesterTool } from './network/theharvester';
-import { whatwebTool } from './network/whatweb';
-import { nucleiTool } from './web/nuclei';
-import { niktoTool } from './web/nikto';
-import { gobusterTool } from './web/gobuster';
-import { ffufTool } from './web/ffuf';
-import { sqlmapTool } from './web/sqlmap';
-import { evilTwinTool } from './wifi/evil-twin';
-import { wifiDeauthTool } from './wifi/deauth';
-import { wifiteScanTool } from './wifi/wifite-scan';
-import { reportWriteTool } from './reports/write';
+import { shellExecTool } from './shell/shell-exec.js';
+import { nmapTool } from './network/nmap.js';
+import { dnsenumTool } from './network/dnsenum.js';
+import { theHarvesterTool } from './network/theharvester.js';
+import { whatwebTool } from './network/whatweb.js';
+import { nucleiTool } from './web/nuclei.js';
+import { niktoTool } from './web/nikto.js';
+import { gobusterTool } from './web/gobuster.js';
+import { ffufTool } from './web/ffuf.js';
+import { sqlmapTool } from './web/sqlmap.js';
+import { evilTwinTool } from './wifi/evil-twin.js';
+import { wifiDeauthTool } from './wifi/deauth.js';
+import { wifiteScanTool } from './wifi/wifite-scan.js';
+import { reportWriteTool } from './reports/write.js';
 import { reportPdfTool } from './reports/pdf.js';
 import type { z } from 'zod';
 
@@ -99,10 +99,10 @@ export const tools: Array<{ name: string; category: string; flags: readonly stri
 ];
 
 export { shellExecTool };
-export { nmapTool } from './network/nmap';
-export { dnsenumTool } from './network/dnsenum';
-export { theHarvesterTool } from './network/theharvester';
-export { whatwebTool } from './network/whatweb';
+export { nmapTool } from './network/nmap.js';
+export { dnsenumTool } from './network/dnsenum.js';
+export { theHarvesterTool } from './network/theharvester.js';
+export { whatwebTool } from './network/whatweb.js';
 export {
   nucleiTool,
   niktoTool,
@@ -110,10 +110,10 @@ export {
   ffufTool,
   sqlmapTool,
 } from './web/index.js';
-export { evilTwinTool } from './wifi/index';
-export { wifiDeauthTool } from './wifi/deauth';
-export { wifiteScanTool } from './wifi/wifite-scan';
-export { reportWriteTool } from './reports/write';
+export { evilTwinTool } from './wifi/index.js';
+export { wifiDeauthTool } from './wifi/deauth.js';
+export { wifiteScanTool } from './wifi/wifite-scan.js';
+export { reportWriteTool } from './reports/write.js';
 export { reportPdfTool, renderPdfBuffer, ReportPdfInput, ReportPdfOutput, type ReportPdfInputT, type ReportPdfOutputT, type PdfReportMeta } from './reports/pdf.js';
-export { readSelections, writeSelections } from './reports/selections';
+export { readSelections, writeSelections } from './reports/selections.js';
 export type { z };

@@ -27,11 +27,11 @@ import {
   buildBpfDenyList,
   type ArchKey,
   type BpfProgram,
-} from './bpf';
+} from './bpf.js';
 import {
   ALLOWLIST_DIAGNOSTIC_SYSCALLS_X86_64,
   DENYLIST_DANGEROUS_SYSCALLS_X86_64,
-} from './bpf';
+} from './bpf.js';
 
 /**
  * Map Node's `process.arch` (which uses the amd64-style names) to the
@@ -203,7 +203,7 @@ export function applySeccomp(opts: ApplySeccompOpts = {}): void {
     );
   }
 
-  const shim = seccompShim as {
+  const shim = seccompShim as unknown as {
     prctlSetNoNewPrivs: () => void;
     installBpf: (bpfBytes: Buffer, flags?: number) => void;
   };

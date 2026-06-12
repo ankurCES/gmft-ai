@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { run } from '../shared/runner';
+import { run } from '../shared/runner.js';
 import type { Tool, ToolContext, Finding } from '@gmft/core';
 
 export const EvilTwinInput = z.object({
@@ -82,7 +82,7 @@ export const evilTwinTool: Tool<typeof EvilTwinInput, typeof EvilTwinOutput> = {
     // Real mode: assertBinary is the project's prereq helper — it throws
     // if fluxion is not on PATH. We import it dynamically to avoid a
     // hard dep when running in dry mode under test.
-    const { assertBinary } = await import('../shared/prereq');
+    const { assertBinary } = await import('../shared/prereq.js');
     assertBinary('fluxion', 'sudo');
 
     // Wrap the fluxion invocation in a detached tmux session so the user

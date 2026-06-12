@@ -49,5 +49,11 @@ jobs:
       - name: Build
         run: pnpm -r build
 
+      # v0.3.A.1: regression check for the dist-runtime bug that shipped in
+      # v0.2.0 (cli.js crashed with ERR_MODULE_NOT_FOUND). If this step fails
+      # the build is broken at runtime even though tsc passed.
+      - name: Smoke test dist cli
+        run: node ./apps/gmft/dist/cli.js --help | head -5
+
       - name: Test
         run: pnpm -r test

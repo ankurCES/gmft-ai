@@ -4,14 +4,14 @@ export {
   EvilTwinOutput,
   type EvilTwinInputT,
   type EvilTwinOutputT,
-} from './evil-twin';
+} from './evil-twin.js';
 export {
   wifiDeauthTool,
   WifiDeauthInput,
   WifiDeauthOutput,
   type WifiDeauthInputT,
   type WifiDeauthOutputT,
-} from './deauth';
+} from './deauth.js';
 export {
   wifiteScanTool,
   WifiteScanInput,
@@ -21,4 +21,4 @@ export {
   type WifiteScanOutputT,
   type WifiteScanApT,
   parseAirodumpTable,
-} from './wifite-scan';
+} from './wifite-scan.js';

@@ -9,8 +9,8 @@
 // that supports it. resetCapabilitiesForTest() clears the override
 // and falls back to the live probes.
 
-import { landlockAvailable, type LandlockStatus } from './landlock';
-import { seccompAvailable, type SeccompStatus } from './seccomp';
+import { landlockAvailable, type LandlockStatus } from './landlock.js';
+import { seccompAvailable, type SeccompStatus } from './seccomp.js';
 import { spawnSync } from 'node:child_process';
 
 export type CapabilityLevel = 'available' | 'unavailable' | 'denied';

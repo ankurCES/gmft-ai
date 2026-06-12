@@ -12,7 +12,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { mkdtempSync, writeFileSync, readFileSync, existsSync, mkdirSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { reportWriteTool } from '../../src/reports/write';
+import { reportWriteTool } from '../../src/reports/write.js';
 import type { ToolContext } from '@gmft/core';
 
 function makeCtx(): ToolContext {

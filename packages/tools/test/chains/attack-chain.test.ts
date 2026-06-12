@@ -20,7 +20,7 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { ATTACK_CHAIN_TOOL, type ChainEvent } from '../../src/chains/attack-chain';
+import { ATTACK_CHAIN_TOOL, type ChainEvent } from '../../src/chains/attack-chain.js';
 import type { ToolContext } from '@gmft/core';
 
 const cwdCtx = { cwd: '/tmp', env: {}, cfg: { sandbox: { mode: 'host' as const } } };

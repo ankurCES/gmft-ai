@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { assertBinary, isPrereqCheckSkipped } from '../../src/shared/prereq';
+import { assertBinary, isPrereqCheckSkipped } from '../../src/shared/prereq.js';
 
 describe('assertBinary', () => {
   it('returns the path of a binary that exists', () => {

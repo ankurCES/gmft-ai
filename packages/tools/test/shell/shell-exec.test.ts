@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { shellExecTool } from '../../src/shell/shell-exec';
+import { shellExecTool } from '../../src/shell/shell-exec.js';
 
 const HOST_CTX = {
   cwd: process.cwd(),
