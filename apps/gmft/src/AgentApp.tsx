@@ -116,6 +116,16 @@ export interface AgentAppProps
   /** Environment metadata for the system prompt. */
   env: PromptEnv;
   /**
+   * Optional override model id for the supervisor's end-of-turn postmortem.
+   * When set, the supervisor builds a second `LanguageModel` from this id
+   * (same provider / apiKey / endpoint as the primary) and passes it to
+   * `withSupervisor({ model })`. When unset, the supervisor uses the
+   * primary `llmModel` (built from `model`).
+   *
+   * Wired in v0.3.A.3 from `cli.tsx`'s `--supervisor-model <id>` flag.
+   */
+  supervisorModelId?: string;
+  /**
    * Optional initial messages to hydrate from a resumed session.
    * The cli.tsx passes `SessionStore.load(id)` converted to `Msg[]` here.
    */
@@ -149,6 +159,7 @@ export function AgentApp({
   session,
   onTurnComplete,
   onExit,
+  supervisorModelId,
   ...appProps
 }: AgentAppProps): React.JSX.Element {
   const system = useMemo(() => buildSystemPrompt('agent', env), [env]);
@@ -247,6 +258,24 @@ export function AgentApp({
         ...(initialEndpoint ? { endpoint: initialEndpoint } : {}),
       }),
     [activeProvider, activeModel, resolvedApiKey, initialEndpoint],
+  );
+
+  // v0.3.A.3 — supervisor's end-of-turn postmortem model. Same
+  // provider / apiKey / endpoint as the primary, but the model id is
+  // either the override (`supervisorModelId` from the `--supervisor-model`
+  // CLI flag) or the primary's model id. When the supervisor and primary
+  // are the same model, the postmortem still fires (this also closes the
+  // v0.2.A.3 gap where AgentApp never passed `model` to `withSupervisor`,
+  // so the postmortem never actually ran in production).
+  const supervisorLlmModel = useMemo(
+    () =>
+      createModel({
+        provider: activeProvider,
+        model: supervisorModelId ?? activeModel,
+        apiKey: resolvedApiKey,
+        ...(initialEndpoint ? { endpoint: initialEndpoint } : {}),
+      }),
+    [activeProvider, activeModel, resolvedApiKey, initialEndpoint, supervisorModelId],
   );
 
   // When the provider changes, fetch a fresh API key. Model-only
@@ -460,6 +489,16 @@ export function AgentApp({
           // `targetRequired` flag, which no current tool uses, so
           // passing undefined is safe for A.2.
           chokepointSessionTarget: undefined,
+          // v0.3.A.3 — pass the supervisor's model so the wrapper
+          // generates the end-of-turn postmortem (closes the v0.2.A.3
+          // gap where AgentApp never passed `model`, so the postmortem
+          // never ran in production). The supervisor uses its own model
+          // when `--supervisor-model` is set, otherwise the primary.
+          model: supervisorLlmModel,
+          // v0.3.A.3 — record the actual model id used so session-log
+          // review can tell whether the primary agent model or the
+          // override (--supervisor-model) generated the postmortem.
+          modelId: supervisorModelId ?? activeModel,
         });
         // v0.3.A.2 — start a fresh per-turn event-id collector. Every
         // event the loop yields with an `id` field (tool-call-request,
