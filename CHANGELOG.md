@@ -53,8 +53,8 @@ Closes the "postmortem never runs" gap from v0.2.A.3.
 
 - `pnpm -r build` — clean.
 - `pnpm -r typecheck` — clean.
-- `pnpm -r test` — 520/520 passing
-  (1 testkit + 213 core + 136 tools + 170 gmft).
+- `pnpm -r test` — 536/536 passing
+  (16 native-shim + 1 testkit + 213 core + 136 tools + 170 gmft).
 - `node ./apps/gmft/dist/cli.js --help` — works (CI smoke).
 - `node ./apps/gmft/dist/cli.js --supervisor-model claude-haiku-4-5 --help`
   — works, flag documented in help text.
