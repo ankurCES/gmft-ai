@@ -3,12 +3,13 @@ import { useEffect, useState } from 'react';
 import { ChatTab } from './ui/tabs/ChatTab.js';
 import { FindingsTab } from './ui/tabs/FindingsTab.js';
 import { HelpTab } from './ui/tabs/HelpTab.js';
+import { AuditLogTab } from './ui/tabs/AuditLogTab.js';
 import { TabBar, type TabId } from './ui/components/TabBar.js';
 import { ApprovalPrompt } from './ui/components/ApprovalPrompt.js';
 import type { Message as Msg } from './ui/components/Message.js';
 import { makeTheme, type Theme } from './ui/theme.js';
 import type { StatusInfo } from './ui/components/StatusRail.js';
-import type { Finding, SupervisorFire } from '@gmft/core';
+import type { AgentEvent, Finding, SupervisorFire } from '@gmft/core';
 import { FindingsStore, defaultReportPath } from '@gmft/tools';
 
 export type { TabId };
@@ -82,9 +83,17 @@ export interface AppProps {
    * accumulator; App is presentational.
    */
   supervisorFires?: SupervisorFire[];
+  /**
+   * v0.3.A.4 — full session event log accumulated by AgentApp from
+   * the agent loop's `runTurn` yield. The AuditLogTab paginates,
+   * filters, and color-codes these. AgentApp is the only writer; App
+   * is presentational. When omitted, the audit tab renders its
+   * empty-state.
+   */
+  auditEvents?: readonly AgentEvent[];
 }
 
-const TAB_ORDER: TabId[] = ['chat', 'findings', 'help'];
+const TAB_ORDER: TabId[] = ['chat', 'findings', 'help', 'audit'];
 
 export function App({
   messages: controlledMessages,
@@ -103,6 +112,7 @@ export function App({
   baseDir,
   sessionId,
   supervisorFires = [],
+  auditEvents,
 }: AppProps): React.JSX.Element {
   const theme: Theme = makeTheme(themeName);
   const { exit } = useApp();
@@ -313,6 +323,12 @@ export function App({
         />
       )}
       {activeTab === 'help' && <HelpTab theme={theme} />}
+      {activeTab === 'audit' && (
+        // v0.3.A.4 — read-only viewer over the session's AgentEvent
+        // log. Empty array means the loop hasn't run yet (or this
+        // is a no-session render); the tab renders its empty-state.
+        <AuditLogTab theme={theme} events={auditEvents ?? []} />
+      )}
     </Box>
   );
 }

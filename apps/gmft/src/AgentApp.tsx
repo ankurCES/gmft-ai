@@ -34,6 +34,7 @@ import {
   loadConfig,
   runTurn,
   withSupervisor,
+  type AgentEvent,
   type ChatMessage,
   type CreateModelOpts,
   type Finding,
@@ -230,6 +231,17 @@ export function AgentApp({
   // of the session — the array stays small (a runaway loop generates
   // ~1 fire per turn at worst).
   const [supervisorFires, setSupervisorFires] = useState<SupervisorFire[]>([]);
+
+  // v0.3.A.4 — session-wide audit log of every event the agent loop
+  // yields (tool-call-request, tool-result, confirmation-needed,
+  // supervisor-fire, supervisor-postmortem, chain-*, text-delta, done,
+  // error). The AuditLogTab reads this to paginate / filter / color
+  // the session. We snapshot on each event into a state array so
+  // switching to the tab is a no-rerender-of-the-loop (and so the tab
+  // can read a stable list, not a ref). The array is append-only for
+  // the life of the session; even a runaway loop generates a bounded
+  // stream per turn.
+  const [auditEvents, setAuditEvents] = useState<AgentEvent[]>([]);
 
   // v0.3.A.2 — set of `event.id` values that the supervisor fired on
   // during the current session. Used by ChatTab to render a
@@ -508,6 +520,10 @@ export function AgentApp({
         // transcript line.
         currentTurnEventIdsRef.current = [];
         for await (const ev of wrapped) {
+          // v0.3.A.4 — append to the session-wide audit log. We use a
+          // functional setState (avoids stale closures across turns);
+          // the array is append-only so we don't need to dedupe.
+          setAuditEvents((prev) => [...prev, ev]);
           // Capture event ids for the marker-rendering pass.
           // `eventIds` are on tool-call-request / tool-result /
           // confirmation-needed. Skip events without an id (text-delta,
@@ -678,6 +694,10 @@ export function AgentApp({
       // v0.3.A.2 — fires accumulated this session, used by ChatTab to
       // render SupervisorFireMarker lines next to the matching message.
       supervisorFires={supervisorFires}
+      // v0.3.A.4 — full event log of the session, used by the new
+      // AuditLogTab to paginate / filter / color the agent loop's
+      // yield stream.
+      auditEvents={auditEvents}
     />
   );
 }
