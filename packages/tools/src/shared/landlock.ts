@@ -52,6 +52,9 @@ export interface LandlockStatus {
 // life of the process. Tests can call _resetLandlockForTest() to bust
 // the cache.
 let cached: LandlockStatus | null = null;
+// Test seam: see _setLandlockAvailableForTest(). When set, the probe
+// returns this value instead of talking to the kernel.
+let testOverride: LandlockStatus | null = null;
 
 /**
  * Probe landlock availability. Returns a `LandlockStatus` snapshot.
@@ -70,6 +73,7 @@ let cached: LandlockStatus | null = null;
  *      (the sysctl can be stale; the shim does a fresh syscall).
  */
 export function landlockAvailable(): LandlockStatus {
+  if (testOverride) return testOverride;
   if (cached) return cached;
 
   if (process.platform !== 'linux') {
@@ -136,6 +140,20 @@ function readLandlockSysctl(): number | null {
 
 /** Test-only: bust the probe cache. */
 export function _resetLandlockForTest(): void {
+  cached = null;
+  testOverride = null;
+}
+
+/**
+ * Test-only: inject a `LandlockStatus` to return from
+ * `landlockAvailable()` regardless of the live probe. Used to
+ * simulate "landlock not available" hosts (e.g. the CI runner's
+ * kernel does support landlock, but the dev host that authored
+ * the test does not). The override is cleared by
+ * `_resetLandlockForTest()`.
+ */
+export function _setLandlockAvailableForTest(status: LandlockStatus | null): void {
+  testOverride = status;
   cached = null;
 }
 

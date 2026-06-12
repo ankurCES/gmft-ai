@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { runnerCapabilities, setCapabilitiesForTest, resetCapabilitiesForTest, type RunnerCapabilities } from '../../src/shared/capabilities';
+import { landlockAvailable } from '../../src/shared/landlock';
 
 describe('runnerCapabilities', () => {
   beforeEach(() => resetCapabilitiesForTest());
@@ -32,13 +33,20 @@ describe('runnerCapabilities', () => {
     expect(live).not.toBe(fake);
   });
 
-  it('default snapshot reports unavailable landlock on a host without kernel support (this dev host)', () => {
+  it('default snapshot is kernel-host-dependent: the live probe wins', () => {
     resetCapabilitiesForTest();
     const caps = runnerCapabilities();
-    // This dev host has no landlock in the kernel. The probe must
-    // report unavailable. If a real landlock kernel is added later,
-    // this test will need to be re-evaluated.
-    expect(caps.landlock).toBe('unavailable');
-    expect(caps.landlockAbi).toBeNull();
+    // The dev host has no landlock in the kernel — the probe reports
+    // unavailable. The CI runner kernel DOES support landlock, so the
+    // probe reports available. Either way, the snapshot is internally
+    // consistent (landlock === 'available' iff landlockAbi !== null).
+    const liveLandlock = landlockAvailable();
+    if (liveLandlock.available) {
+      expect(caps.landlock).toBe('available');
+      expect(caps.landlockAbi).toBe(liveLandlock.abiVersion);
+    } else {
+      expect(caps.landlock).toBe('unavailable');
+      expect(caps.landlockAbi).toBeNull();
+    }
   });
 });

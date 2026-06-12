@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { landlockAvailable, applyLandlock, _resetLandlockForTest, LANDLOCK_ABI_MIN, LANDLOCK_ABI_MAX } from '../../src/shared/landlock';
+import { landlockAvailable, applyLandlock, _resetLandlockForTest, _setLandlockAvailableForTest, LANDLOCK_ABI_MIN, LANDLOCK_ABI_MAX } from '../../src/shared/landlock';
 
 describe('landlockAvailable', () => {
   // Force a fresh probe for each test so prior tests don't pollute the cache.
@@ -43,8 +43,17 @@ describe('applyLandlock', () => {
   });
 
   it('throws with a clear remediation message when landlock is not available', () => {
-    // This dev host has no landlock; applyLandlock must refuse rather
-    // than silently no-op.
-    expect(() => applyLandlock({ fsAllowRead: ['/usr'] })).toThrowError(/not available/i);
+    // Simulate a landlock-less host via the test seam. The dev host
+    // that authored this test has no landlock, but the CI runner
+    // kernel does — so we cannot rely on the live probe here. The
+    // production call path is exercised by `runner-host-sandbox.test.ts`
+    // (which uses `setCapabilitiesForTest` to flip the resolved
+    // mode) and by the D.1.1 manual smoke.
+    _setLandlockAvailableForTest({ available: false, abiVersion: null, reason: 'kernel-too-old' });
+    try {
+      expect(() => applyLandlock({ fsAllowRead: ['/usr'] })).toThrowError(/not available/i);
+    } finally {
+      _resetLandlockForTest();
+    }
   });
 });
