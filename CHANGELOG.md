@@ -167,6 +167,132 @@ host-fallback path exposes. ADR-0011 still needs to be
 written (D.3); this slice ships the code, ADR-0011 will
 document the policy.
 
+## [0.2.0-D.2] — 2026-06-17
+
+Second slice of v0.2.D. Closes the host-fallback gap: when the
+runner falls back from Docker to host mode, the chokepoint now
+**denies** destructive/elevated tools when neither Docker nor
+kernel landlock is available (instead of silently degrading to
+"host, no protection"). The StatusRail surfaces the resolved
+sandbox mode + the `✗ unsandboxed` red glyph when a call is
+denied. ADR-0003's "v0.2 may add landlock/AppArmor" deferral is
+fulfilled by this slice.
+
+### Added
+- `packages/core/src/chokepoint/requires-sandbox.ts` — new
+  `checkRequiresSandbox` rule for the chokepoint aggregator.
+  Fires when `runnerCapabilities().resolvedAuto === 'host'`
+  AND the call carries `destructive` or `requiresElevation`.
+  Returns `deny` with the canonical reason
+  `"host fallback for destructive/elevated tools requires
+  Docker or kernel landlock (set
+  GMFT_ALLOW_UNSANDBOXED_DESTRUCTIVE=true to override; not
+  recommended)"`. An opt-in env flag
+  `GMFT_ALLOW_UNSANDBOXED_DESTRUCTIVE` lets the user force
+  the old "warn + proceed" behavior (default: `false`, the
+  secure default).
+- Chokepoint aggregator rule order is now
+  `elevation → typeToConfirm → destructive → target →
+  requiresSandbox → allow`. `requiresSandbox` is the LAST
+  gate. Rationale: a destructive tool that needs sandboxing
+  is still a destructive tool; the existing destructive→
+  confirm flow should fire first so the user is *asked*,
+  and only when they say "yes" does the runner then refuse
+  because there's no sandbox.
+- `runnerCapabilities` is now plumbed into the chokepoint's
+  env (via `policy.ts` — `opts.runnerCapabilities ??
+  DEFAULT_CAPS` keeps the chokepoint's pure unit tests
+  hermetic). The `DEFAULT_CAPS` constant is
+  `{resolvedAuto: 'host'}` so the rule still fires when the
+  env is missing the field.
+- `RunResult` gains `runnerMode: 'docker' | 'host+landlock' |
+  'host+seccomp' | 'host+landlock+seccomp' | 'host'`. The
+  audit log records the actual mode each tool call ran in.
+- `apps/gmft/src/AgentApp.tsx` — the rail's `sandbox` field
+  starts at the host's auto-resolved mode and updates from
+  the tool-result's `output.mode` after every call. A denied
+  call (ok=false, non-empty reason) sets `sandbox =
+  'unsandboxed'`, surfacing the red `✗ unsandboxed` glyph.
+- `apps/gmft/src/ui/components/StatusRail.tsx` — new
+  `SandboxField` with 4 color-coded states: `docker` /
+  `host+landlock+seccomp` (green — kernel-enforced),
+  `host` (yellow — `⚠` warning), and `unsandboxed` (red —
+  `✗`).
+- `apps/gmft/src/cli.tsx` — new `--sandbox=docker|host|auto`
+  CLI flag. The `auto` default is: docker if available, else
+  host+landlock if available, else host (with the chokepoint
+  rule denying destructive calls). The flag is parsed by
+  `apps/gmft/src/sandbox-flag.ts`.
+
+### Tests
+- 6 new tests in
+  `packages/core/src/chokepoint/requires-sandbox.test.ts`:
+  3 deny (host+destructive, host+elevated, deny-reason
+  contains canonical string) + 3 allow (host+read-only,
+  docker+anything, landlock+anything, override env flag
+  set, target-required rule). The full aggregator rule
+  order is asserted in one case.
+- 4 new tests in `apps/gmft/test/capabilities-snapshot.test.ts`:
+  shape (domain check, not value — kernels differ) + cache
+  (same object on repeat calls) + 2 negative tests guarding
+  the `runnerCapabilities` test seam.
+- 11 new tests in `apps/gmft/test/status-rail-sandbox.test.tsx`:
+  3 mode color coding (green/yellow/red) + 3 glyph
+  rendering (⚠ host, ✗ unsandboxed, no glyph on docker) +
+  2 transitions (destructive→unsandboxed flips red) +
+  3 regression (the existing 4 rail modes still render).
+- 6 new tests in `apps/gmft/test/cli-sandbox-flag.test.ts`:
+  3 parse cases (docker/host/auto) + 2 invalid input
+  (unknown value, malformed) + 1 default-is-auto.
+- 1 new e2e in `apps/gmft/test/e2e-sandbox-deny.test.tsx`:
+  AgentApp + real chokepoint + a runner-stubbed mocked
+  `runTurn` that drives the chokepoint on an elevated call.
+  Asserts the rail flips to `✗ unsandboxed` and the
+  chokepoint's decision has `kind: 'deny'` with the
+  canonical reason. **Note on flag choice:** the original
+  plan said "destructive tool" but the aggregator's rule
+  order means `checkDestructive` short-circuits a
+  `destructive` flag with `kind: 'confirm'` *before*
+  `checkRequiresSandbox` runs. The e2e uses
+  `requiresElevation` + `GMFT_ALLOW_ELEVATION=true` so
+  `checkElevation` passes through and
+  `checkRequiresSandbox` actually fires. Documented in
+  the test docstring + plan line 99.
+- v0.2.0-D.2 totals: 1 + 211 + 136 + 149 = **497 tests,
+  0 fails**. `pnpm -r build`, `pnpm -r typecheck`,
+  `pnpm -r test` all clean. CI green on Node 20+22 matrix.
+
+### Plan deviations
+- Two tests in `packages/tools/test/shared/{capabilities,
+  landlock}.test.ts` were originally host-dependent (assumed
+  the dev host's "no landlock" kernel). CI runner kernels
+  have landlock, so the tests failed in CI. Fix landed in
+  commit `d0ecad9`: `capabilities.test.ts` now reads the
+  live probe and asserts the snapshot is internally
+  consistent with whatever it says. `landlock.test.ts` now
+  uses a new test seam `_setLandlockAvailableForTest(status)`
+  (added to `packages/tools/src/shared/landlock.ts`) to
+  deterministically simulate a "landlock not available"
+  host. Both tests are now kernel-agnostic; the production
+  call path is exercised by `runner-host-sandbox.test.ts`
+  (which uses `setCapabilitiesForTest`) and the D.1.1
+  manual smoke (a kernel with real landlock).
+- The e2e test's flag choice (see Tests section above)
+  was a design clarification, not a deviation. The plan
+  line 127 already documented the "rule order bottom"
+  rationale.
+
+### Migration notes
+- Users running v0.2.A on a host without Docker and without
+  kernel landlock will see **destructive/elevated tools
+  denied by default** the first time they run v0.2.D. To
+  restore the old "warn + proceed" behavior, set
+  `GMFT_ALLOW_UNSANDBOXED_DESTRUCTIVE=true` in the
+  environment. This is the secure default; the override
+  is documented but not recommended.
+- The audit log's `runnerMode` field is new; older log
+  readers (v0.2.A and earlier) will ignore it.
+
 ## [0.2.0-A.2] — 2026-06-12
 
 Second slice of v0.2.A (multi-agent supervisor). Ships the
