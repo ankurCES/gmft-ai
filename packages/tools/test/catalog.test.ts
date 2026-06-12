@@ -4,9 +4,9 @@ vi.mock('../src/shared/runner', () => ({
   run: vi.fn(),
 }));
 
-import { tools } from '../src/catalog';
-import { wifiDeauthTool } from '../src/wifi/deauth';
-import { wifiteScanTool } from '../src/wifi/wifite-scan';
+import { tools } from '../src/catalog.js';
+import { wifiDeauthTool } from '../src/wifi/deauth.js';
+import { wifiteScanTool } from '../src/wifi/wifite-scan.js';
 
 describe('tools catalog — wifi tools registered', () => {
   it('registers wifi_deauth and wifite_scan in the default tool list', () => {

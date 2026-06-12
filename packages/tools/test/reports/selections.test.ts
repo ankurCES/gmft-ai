@@ -6,7 +6,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { mkdtempSync, existsSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { readSelections, writeSelections } from '../../src/reports/selections';
+import { readSelections, writeSelections } from '../../src/reports/selections.js';
 
 describe('selections sidecar', () => {
   let baseDir: string;

@@ -6,8 +6,8 @@ vi.mock('../../src/shared/runner', () => ({
   run: vi.fn(),
 }));
 
-import { gobusterTool, parseGobusterText } from '../../src/web/gobuster';
-import { run } from '../../src/shared/runner';
+import { gobusterTool, parseGobusterText } from '../../src/web/gobuster.js';
+import { run } from '../../src/shared/runner.js';
 
 const FIXTURE = readFileSync(
   join(__dirname, 'fixtures/gobuster-sample.txt'),

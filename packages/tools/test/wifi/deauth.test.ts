@@ -4,8 +4,8 @@ vi.mock('../../src/shared/runner', () => ({
   run: vi.fn(),
 }));
 
-import { wifiDeauthTool, WifiDeauthInput } from '../../src/wifi/deauth';
-import { run } from '../../src/shared/runner';
+import { wifiDeauthTool, WifiDeauthInput } from '../../src/wifi/deauth.js';
+import { run } from '../../src/shared/runner.js';
 
 describe('wifi_deauth tool (destructive + requiresElevation + attack-confirm)', () => {
   beforeEach(() => {

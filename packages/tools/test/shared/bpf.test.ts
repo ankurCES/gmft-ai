@@ -6,7 +6,7 @@ import {
   buildBpfDenyList,
   ALLOWLIST_DIAGNOSTIC_SYSCALLS_X86_64,
   type BpfInsn,
-} from '../../src/shared/bpf';
+} from '../../src/shared/bpf.js';
 import { Buffer } from 'node:buffer';
 
 // BPF opcodes mirrored from bpf.ts (kept in sync by hand — these are

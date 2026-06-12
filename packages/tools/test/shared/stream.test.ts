@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { spawnStreaming } from '../../src/shared/stream';
+import { spawnStreaming } from '../../src/shared/stream.js';
 
 describe('spawnStreaming', () => {
   it('collects stdout and stderr to completion', async () => {

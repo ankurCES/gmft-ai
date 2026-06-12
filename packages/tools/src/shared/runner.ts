@@ -1,5 +1,5 @@
 import { spawn } from 'node:child_process';
-import { assertBinary, isPrereqCheckSkipped } from './prereq';
+import { assertBinary, isPrereqCheckSkipped } from './prereq.js';
 import { applyLandlock } from './landlock.js';
 import { applySeccomp, type SeccompPolicyKind } from './seccomp.js';
 import { runnerCapabilities, type RunnerCapabilities } from './capabilities.js';

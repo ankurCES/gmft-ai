@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { landlockAvailable, applyLandlock, _resetLandlockForTest, _setLandlockAvailableForTest, LANDLOCK_ABI_MIN, LANDLOCK_ABI_MAX } from '../../src/shared/landlock';
+import { landlockAvailable, applyLandlock, _resetLandlockForTest, _setLandlockAvailableForTest, LANDLOCK_ABI_MIN, LANDLOCK_ABI_MAX } from '../../src/shared/landlock.js';
 
 describe('landlockAvailable', () => {
   // Force a fresh probe for each test so prior tests don't pollute the cache.

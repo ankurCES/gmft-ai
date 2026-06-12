@@ -8,8 +8,8 @@ import {
   wifiteScanTool,
   WifiteScanInput,
   parseAirodumpTable,
-} from '../../src/wifi/wifite-scan';
-import { run } from '../../src/shared/runner';
+} from '../../src/wifi/wifite-scan.js';
+import { run } from '../../src/shared/runner.js';
 
 describe('wifite_scan tool (destructive + requiresElevation + attack-confirm)', () => {
   beforeEach(() => {

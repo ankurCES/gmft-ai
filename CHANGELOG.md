@@ -4,6 +4,78 @@ All notable changes to GMFT-AI are documented here.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning: [Semantic](https://semver.org/).
 
+## [0.3.0-A.1] — 2026-06-17
+
+**v0.3.A slice 1 — dist runtime fix.** Fixes the long-standing
+v0.2 bug where `node ./dist/cli.js` (or `gmft` after install)
+crashed immediately with `ERR_MODULE_NOT_FOUND` because the
+`@gmft/tools` package's compiled JS still imported sibling
+modules without the `.js` extension that native ESM resolution
+requires. Bundler-style resolution worked for vitest+esbuild,
+but `node` (which is what runs the published CLI) does not.
+
+### Changes
+
+- **A.1.1** — Added `.js` extensions to 82 relative
+  `import`/`export` specifiers across 46 source + test files
+  in `packages/tools/src/`, `packages/tools/test/`. Generated
+  `packages/core/src/` and `apps/gmft/src/` were already
+  extension-complete.
+- **A.1.2** — Switched `module` and `moduleResolution` in
+  `tsconfig.base.json` from `ESNext`/`Bundler` to `NodeNext`.
+  This makes `tsc` enforce the same resolution rules the
+  runtime will see, catching missing extensions at build time
+  instead of runtime.
+- **A.1.3** — `dist/cli.js` now runs with plain `node`; the
+  `start` script and `bin: gmft → ./dist/cli.js` work
+  end-to-end. **No code change required**: both already
+  pointed at the right path; they were just broken because
+  the emitted JS couldn't resolve.
+- **Cross-shim cast fix** — `@gmft/landlock-shim` and
+  `@gmft/seccomp-shim` are CJS modules (`module.exports =
+  require('./build/Release/*.node')`). Under NodeNext,
+  `import * as shim` sees a namespace whose shape doesn't
+  structurally match the inline `as { ... }` cast. Tightened
+  the three call sites in `landlock.ts` and `seccomp.ts` to
+  `as unknown as { ... }` (the canonical NodeNext escape
+  hatch). No runtime change.
+- **Test fix** — `packages/core/test/session-paths.test.ts`
+  had a `require('node:fs')` to avoid a top-level import.
+  Under NodeNext that becomes a compile error. Moved
+  `existsSync` to the top-level import.
+
+### Verification
+
+- `pnpm -r build` — clean (7/7 packages).
+- `pnpm -r test` — 497/497 passing
+  (1 testkit + 211 core + 136 tools + 149 gmft).
+- `pnpm -r typecheck` — clean (6/6).
+- `node ./apps/gmft/dist/cli.js --help` — works.
+- `node ./apps/gmft/dist/cli.js --version` — `0.1.0`.
+- `node ./apps/gmft/dist/cli.js --target test` — runs the
+  full TUI boot (fails on the expected `anthropic requires
+  apiKey` runtime error, which is **after** the module
+  resolution that was previously crashing).
+
+### Migration notes
+
+- Anyone consuming `@gmft/tools` from a native-ESM context
+  (Node 18+, no bundler) will now see the `.js` extensions
+  in the emitted `dist/`. That is the spec-correct form
+  and is what the spec says you should do.
+- The change to `tsconfig.base.json` is a **monorepo-wide
+  tightening**. New TS code in any package must now use
+  `.js` extensions on relative imports.
+
+### Known issues (unchanged from v0.2)
+
+- `stream.test.ts > spawnStreaming > fires onStdout multiple
+  times for chunked output` is a flaky test that fails
+  ~1% of the time on slow CI. The v0.2 `setImmediate` fix
+  helps but doesn't eliminate it. Tracked in v0.3.A scope
+  (the supervisor audit-viewer work in A.2.3 will write a
+  more deterministic test).
+
 ## [0.2.0] — 2026-06-17
 
 First 0.2 release. Aggregates the v0.2.A (multi-agent

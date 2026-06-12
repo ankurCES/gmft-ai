@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
@@ -80,7 +80,6 @@ describe('session/paths', () => {
     currentSessionPath();
     currentSessionIdPath();
     // The directory should not exist; the consumer is responsible for mkdir.
-    const { existsSync } = require('node:fs') as typeof import('node:fs');
     expect(existsSync(join(tmp, 'gmft', 'sessions'))).toBe(false);
     // sanity: write a sentinel file and ensure the path function didn't touch it
     writeFileSync(join(tmp, 'sentinel'), 'ok');

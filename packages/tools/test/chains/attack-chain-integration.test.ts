@@ -38,7 +38,7 @@ import {
   type ChokepointEnv,
   type Finding,
 } from '@gmft/core';
-import { ATTACK_CHAIN_TOOL } from '../../src/chains/attack-chain';
+import { ATTACK_CHAIN_TOOL } from '../../src/chains/attack-chain.js';
 
 const cwdCtx: ToolContext = {
   cwd: '/tmp',

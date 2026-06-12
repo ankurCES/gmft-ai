@@ -6,8 +6,8 @@ vi.mock('../../src/shared/runner', () => ({
   run: vi.fn(),
 }));
 
-import { sqlmapTool, parseSqlmapText } from '../../src/web/sqlmap';
-import { run } from '../../src/shared/runner';
+import { sqlmapTool, parseSqlmapText } from '../../src/web/sqlmap.js';
+import { run } from '../../src/shared/runner.js';
 
 const FIXTURE = readFileSync(
   join(__dirname, 'fixtures/sqlmap-sample.txt'),

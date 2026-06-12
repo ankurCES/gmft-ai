@@ -91,7 +91,7 @@ export function landlockAvailable(): LandlockStatus {
   try {
     // The shim is a native module; on non-Linux we exit early
     // above, so this require only runs on Linux.
-    const shim = landlockShim as { getABI: () => number };
+    const shim = landlockShim as unknown as { getABI: () => number };
     const raw = shim.getABI();
     if (Number.isInteger(raw) && raw >= LANDLOCK_ABI_MIN && raw <= LANDLOCK_ABI_MAX) {
       shimAbi = raw;
@@ -194,7 +194,7 @@ export function applyLandlock(opts: LandlockApplyOpts): void {
     );
   }
 
-  const shim = landlockShim as {
+  const shim = landlockShim as unknown as {
     createRuleset: (attr?: number | bigint) => number;
     addRule: (fd: number, ruleType: number, allowedAccess: number | bigint, parent: string | number) => number;
     restrictSelf: (fd: number, flags: number) => number;

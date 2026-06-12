@@ -6,8 +6,8 @@ vi.mock('../../src/shared/runner', () => ({
   run: vi.fn(),
 }));
 
-import { ffufTool, parseFfufJson } from '../../src/web/ffuf';
-import { run } from '../../src/shared/runner';
+import { ffufTool, parseFfufJson } from '../../src/web/ffuf.js';
+import { run } from '../../src/shared/runner.js';
 
 const FIXTURE = readFileSync(
   join(__dirname, 'fixtures/ffuf-sample.json'),
