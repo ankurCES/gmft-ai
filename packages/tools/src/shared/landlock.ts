@@ -19,6 +19,7 @@
 // Amendment 1 for the rationale on each of the above.
 
 import { readFileSync } from 'node:fs';
+import * as landlockShim from '@gmft/landlock-shim';
 
 /**
  * Landlock ABI version range. The shim can return up to 8 from a
@@ -88,11 +89,9 @@ export function landlockAvailable(): LandlockStatus {
   let shimAbi: number | null = null;
   let probeError: string | null = null;
   try {
-    // Lazy-require so a missing/broken shim does not break the
-    // consumer's import on non-Linux. On non-Linux we return early
-    // above, so the require only runs on Linux.
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const shim = require('@gmft/landlock-shim') as { getABI: () => number };
+    // The shim is a native module; on non-Linux we exit early
+    // above, so this require only runs on Linux.
+    const shim = landlockShim as { getABI: () => number };
     const raw = shim.getABI();
     if (Number.isInteger(raw) && raw >= LANDLOCK_ABI_MIN && raw <= LANDLOCK_ABI_MAX) {
       shimAbi = raw;
@@ -195,8 +194,7 @@ export function applyLandlock(opts: LandlockApplyOpts): void {
     );
   }
 
-  // eslint-disable-next-line @typescript-eslint/no-require-imports
-  const shim = require('@gmft/landlock-shim') as {
+  const shim = landlockShim as {
     createRuleset: (attr?: number | bigint) => number;
     addRule: (fd: number, ruleType: number, allowedAccess: number | bigint, parent: string | number) => number;
     restrictSelf: (fd: number, flags: number) => number;

@@ -21,6 +21,7 @@
 // restrict_self) only affect the child.
 
 import { readFileSync } from 'node:fs';
+import * as seccompShim from '@gmft/seccomp-shim';
 import {
   buildBpfAllowlist,
   buildBpfDenyList,
@@ -202,8 +203,7 @@ export function applySeccomp(opts: ApplySeccompOpts = {}): void {
     );
   }
 
-  // eslint-disable-next-line @typescript-eslint/no-require-imports
-  const shim = require('@gmft/seccomp-shim') as {
+  const shim = seccompShim as {
     prctlSetNoNewPrivs: () => void;
     installBpf: (bpfBytes: Buffer, flags?: number) => void;
   };

@@ -11,6 +11,7 @@
 
 import { landlockAvailable, type LandlockStatus } from './landlock';
 import { seccompAvailable, type SeccompStatus } from './seccomp';
+import { spawnSync } from 'node:child_process';
 
 export type CapabilityLevel = 'available' | 'unavailable' | 'denied';
 
@@ -53,10 +54,6 @@ function probeDocker(): CapabilityLevel {
   if (testOverride) return testOverride.docker;
   if (process.env.GMFT_SKIP_PREREQ === '1') return 'unavailable';
   // `which docker` — but cheap: spawnSync is fast on PATH-hit.
-  // We import here to avoid a top-level import for a child-process
-  // call in the common case.
-  // eslint-disable-next-line @typescript-eslint/no-require-imports
-  const { spawnSync } = require('node:child_process') as typeof import('node:child_process');
   const which = process.platform === 'win32' ? 'where' : 'which';
   const r = spawnSync(which, ['docker'], { encoding: 'utf-8' });
   return r.status === 0 ? 'available' : 'unavailable';

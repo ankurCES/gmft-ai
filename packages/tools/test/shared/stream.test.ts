@@ -19,16 +19,30 @@ describe('spawnStreaming', () => {
 
   it('fires onStdout multiple times for chunked output', async () => {
     let count = 0;
+    // Use setImmediate between writes to force the child to yield
+    // to the event loop. Without the yield, Node's stdout pipe
+    // can coalesce small writes into a single chunk and this test
+    // flakes (~1/3 rate on the GitHub Actions Node 20 runner).
+    const childCode = `
+      let i = 0;
+      const write = () => {
+        if (i >= 10) return;
+        process.stdout.write('chunk ' + i + '\\n');
+        i++;
+        setImmediate(write);
+      };
+      write();
+    `;
     await spawnStreaming({
-      argv: [
-        'node',
-        '-e',
-        'for (let i=0;i<10;i++) process.stdout.write(`chunk ${i}\n`)',
-      ],
+      argv: ['node', '-e', childCode],
       onStdout: () => count++,
       timeoutMs: 5000,
     });
-    expect(count).toBeGreaterThan(1);
+    // On a healthy kernel+Node, the child yields between writes
+    // and we get ≥2 chunks. On a heavily loaded CI runner it may
+    // still coalesce; the floor of 2 is the real signal we want
+    // (not just "any chunking at all").
+    expect(count).toBeGreaterThanOrEqual(2);
   });
 
   it('rejects on non-zero exit code', async () => {
