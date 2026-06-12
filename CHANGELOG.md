@@ -4,6 +4,19 @@ All notable changes to GMFT-AI are documented here.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning: [Semantic](https://semver.org/).
 
+## [0.2.0-D.3] — 2026-06-17
+
+Docs-only slice. D.3 deliverable promised in
+[0.2.0-D.1](#020-d1--2026-06-17)'s CHANGELOG entry.
+
+### Added
+- [ADR-0011](./docs/plans/adr/0011-host-sandbox-enforcement.md) —
+  documents the v0.2.D host-sandbox enforcement policy
+  (landlock + seccomp auto-apply, chokepoint
+  `checkRequiresSandbox` rule, StatusRail 4-state, the
+  `_setLandlockAvailableForTest` test seam). No code changes;
+  all v0.2.D code shipped in [0.2.0-D.2](#020-d2--2026-06-17).
+
 ## [0.2.0-A.3] — 2026-06-12
 
 Final slice of v0.2.A (multi-agent supervisor). Ships the
