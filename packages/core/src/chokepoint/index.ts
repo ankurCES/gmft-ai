@@ -14,6 +14,7 @@ import {
   checkTarget,
   checkTypeToConfirm,
 } from './rules.js';
+import { checkRequiresSandbox } from './requires-sandbox.js';
 
 export function createChokepoint(env: ChokepointEnv): Chokepoint {
   return {
@@ -23,6 +24,7 @@ export function createChokepoint(env: ChokepointEnv): Chokepoint {
         checkTypeToConfirm(call) ??
         checkDestructive(call) ??
         checkTarget(call, env) ??
+        checkRequiresSandbox(call, env) ??
         { kind: 'allow' }
       );
     },

@@ -49,6 +49,7 @@ import {
   whatwebTool,
   reportWriteTool,
   reportPdfTool,
+  runnerCapabilities,
 } from '@gmft/tools';
 import { App, type AppProps } from './App.js';
 import type { Message as Msg } from './ui/components/Message.js';
@@ -185,7 +186,13 @@ export function AgentApp({
   const [status, setStatus] = useState<StatusInfo>(() => ({
     model: appProps.initialConfig?.model ?? 'none',
     provider: appProps.initialConfig?.provider ?? 'none',
-    sandbox: 'unknown',
+    // v0.2.D — the rail starts with the host's auto-resolved mode. As
+    // soon as the first tool runs, the `tool-result` handler below
+    // will overwrite this with the actual `RunResult.mode` from the
+    // runner (e.g. `host+landlock+seccomp` if both kernel layers
+    // applied, or `host` if neither did). The rail's `SandboxField`
+    // color-codes kernel-enforced modes green and bare host yellow.
+    sandbox: runnerCapabilities().resolvedAuto,
     ...(sessionTarget ? { target: sessionTarget } : {}),
     tokensIn: 0,
     tokensOut: 0,
@@ -448,15 +455,38 @@ export function AgentApp({
             //    else is a no-op (the executor's extractFindings is the
             //    authoritative path; this is a UI-side mirror that
             //    updates faster than the sidecar fsync).
+            // 3. v0.2.D — update the sandbox field with the runner's
+            //    actual mode. The host runner emits `RunResult.mode`
+            //    ∈ `'host' | 'host+landlock' | 'host+seccomp' |
+            //    'host+landlock+seccomp' | 'docker'`. A denied call
+            //    (ev.ok === false, no output) records `'unsandboxed'`
+            //    so the rail shows the user a red ✗ that maps to the
+            //    audit log entry.
             setStatus((prev) => {
-              const next = {
-                ...prev,
-                toolCalls: prev.toolCalls + 1,
-              };
-              if (!ev.ok || !ev.output || typeof ev.output !== 'object') {
+              const next = { ...prev, toolCalls: prev.toolCalls + 1 };
+              if (!ev.ok) {
+                // Chokepoint denied or runner refused; record the
+                // audit-side mode so the user can correlate the rail
+                // with the audit log.
+                if (ev.reason !== undefined && ev.reason.length > 0) {
+                  next.sandbox = 'unsandboxed';
+                }
                 return next;
               }
-              const findings = (ev.output as { findings?: unknown }).findings;
+              if (!ev.output || typeof ev.output !== 'object') {
+                return next;
+              }
+              const out = ev.output as { mode?: unknown; findings?: unknown };
+              if (
+                out.mode === 'docker' ||
+                out.mode === 'host' ||
+                out.mode === 'host+landlock' ||
+                out.mode === 'host+seccomp' ||
+                out.mode === 'host+landlock+seccomp'
+              ) {
+                next.sandbox = out.mode;
+              }
+              const findings = out.findings;
               if (!Array.isArray(findings) || findings.length === 0) {
                 return next;
               }

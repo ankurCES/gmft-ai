@@ -13,10 +13,16 @@
  *   3. `requiresElevation` — denies unless the env opts in
  *      (`GMFT_ALLOW_ELEVATION=true`).
  *
+ * v0.2.D adds a fourth rule (`checkRequiresSandbox`, lives in
+ * ./requires-sandbox.ts) that denies destructive/elevated calls
+ * when the resolved runner is `host` and no override env-var is set.
+ *
  * `Chokepoint` is an interface, not a class, so tests can swap in a
  * fake that always returns `Allow` (happy path) or always `Deny`
  * (blocked path) without dragging in env-var machinery.
  */
+
+import type { RunnerCapabilitiesShape } from './requires-sandbox.js';
 
 export type Decision =
   | { kind: 'allow' }
@@ -71,6 +77,10 @@ export interface ChokepointEnv {
    * still format-checked and denylist-checked as before).
    */
   sessionTarget?: string;
+  /** Snapshot of runner capabilities; see `@gmft/tools`. v0.2.D. */
+  runnerCapabilities: RunnerCapabilitiesShape;
+  /** True iff `process.env.GMFT_ALLOW_UNSANDBOXED_DESTRUCTIVE === 'true'`. v0.2.D. */
+  allowUnsandboxedDestructive: boolean;
 }
 
 export interface Chokepoint {

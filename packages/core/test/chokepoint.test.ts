@@ -7,11 +7,21 @@
 
 import { describe, it, expect } from 'vitest';
 import { createChokepoint, readChokepointEnv, type ChokepointCall, type ChokepointEnv } from '../src/chokepoint/index.js';
+import type { RunnerCapabilitiesShape } from '../src/chokepoint/requires-sandbox.js';
+
+// v0.2.D: a neutral runner-capabilities snapshot for tests that
+// don't care about the new rule. `resolvedAuto: 'docker'` keeps the
+// new `checkRequiresSandbox` rule inert for tests that predate it.
+const testCaps: RunnerCapabilitiesShape = {
+  resolvedAuto: 'docker',
+};
 
 const baseEnv: ChokepointEnv = {
   allowPrivateNetworks: false,
   allowElevation: false,
   denylist: [],
+  runnerCapabilities: testCaps,
+  allowUnsandboxedDestructive: false,
 };
 
 function call(overrides: Partial<ChokepointCall> = {}): ChokepointCall {
@@ -251,6 +261,70 @@ describe('createChokepoint', () => {
         expect(d.reason).toMatch(/GMFT_ALLOW_ELEVATION/);
       }
     });
+
+    it('requiresSandbox beats allow: elevated+host+allowElevation+no-override is deny', () => {
+      // v0.2.D: when the runner resolves to `host` (no Docker, no
+      // landlock) and the operator has NOT opted in to
+      // GMFT_ALLOW_UNSANDBOXED_DESTRUCTIVE, the chokepoint denies
+      // elevated tools rather than letting them run unsandboxed.
+      // (Destructive tools get a confirm prompt first — see the
+      // next test — so the new rule is observably tested via the
+      // elevated path.)
+      const cp = createChokepoint({
+        ...baseEnv,
+        allowElevation: true,
+        runnerCapabilities: { ...testCaps, resolvedAuto: 'host' },
+      });
+      const d = cp.decide(call({ flags: ['requiresElevation'] }));
+      expect(d.kind).toBe('deny');
+      if (d.kind === 'deny') {
+        expect(d.reason).toMatch(/host fallback for destructive/);
+      }
+    });
+
+    it('destructive beats requiresSandbox: destructive+host still gets the confirm prompt first', () => {
+      // The confirm prompt must come BEFORE the unsandboxed deny.
+      // Otherwise the user would be locked out of a destructive tool
+      // without ever being told *why* they could confirm it. The
+      // runner itself is then responsible for refusing to actually
+      // run the tool on the host.
+      const cp = createChokepoint({
+        ...baseEnv,
+        runnerCapabilities: { ...testCaps, resolvedAuto: 'host' },
+      });
+      const d = cp.decide(call({ flags: ['destructive'] }));
+      // checkDestructive fires at position 3, checkRequiresSandbox at
+      // position 5. Confirm should win.
+      expect(d.kind).toBe('confirm');
+    });
+
+    it('elevation beats requiresSandbox: elevated+host+no-allowElevation denies with elevation reason first', () => {
+      // Elevated tools deny with the elevation reason first; the
+      // unsandboxed deny never fires because the elevation rule
+      // returns non-null earlier in the chain.
+      const cp = createChokepoint({
+        ...baseEnv,
+        runnerCapabilities: { ...testCaps, resolvedAuto: 'host' },
+      });
+      const d = cp.decide(call({ flags: ['requiresElevation'] }));
+      expect(d.kind).toBe('deny');
+      if (d.kind === 'deny') {
+        expect(d.reason).toMatch(/GMFT_ALLOW_ELEVATION/);
+      }
+    });
+
+    it('requiresSandbox yields to allowUnsandboxedDestructive override', () => {
+      // Same setup as the deny case, but with the opt-in env. The
+      // operator accepts responsibility and the tool runs.
+      const cp = createChokepoint({
+        ...baseEnv,
+        allowElevation: true,
+        allowUnsandboxedDestructive: true,
+        runnerCapabilities: { ...testCaps, resolvedAuto: 'host' },
+      });
+      const d = cp.decide(call({ flags: ['requiresElevation'] }));
+      expect(d.kind).toBe('allow');
+    });
   });
 });
 
@@ -260,7 +334,11 @@ describe('readChokepointEnv', () => {
       cfg: { chokepoint: { allowPrivateNetworks: true, denylist: ['x', 'y'] } },
       env: {},
     });
-    expect(got).toEqual({ allowPrivateNetworks: true, allowElevation: false, denylist: ['x', 'y'] });
+    expect(got.allowPrivateNetworks).toBe(true);
+    expect(got.denylist).toEqual(['x', 'y']);
+    expect(got.allowElevation).toBe(false);
+    expect(got.allowUnsandboxedDestructive).toBe(false);
+    expect(got.runnerCapabilities).toBeDefined();
   });
 
   it('sets allowElevation from GMFT_ALLOW_ELEVATION=true', () => {
@@ -277,5 +355,21 @@ describe('readChokepointEnv', () => {
       env: { GMFT_ALLOW_ELEVATION: '1' },
     });
     expect(got.allowElevation).toBe(false);
+  });
+
+  it('sets allowUnsandboxedDestructive from GMFT_ALLOW_UNSANDBOXED_DESTRUCTIVE=true', () => {
+    const got = readChokepointEnv({
+      cfg: { chokepoint: { allowPrivateNetworks: false, denylist: [] } },
+      env: { GMFT_ALLOW_UNSANDBOXED_DESTRUCTIVE: 'true' },
+    });
+    expect(got.allowUnsandboxedDestructive).toBe(true);
+  });
+
+  it('treats GMFT_ALLOW_UNSANDBOXED_DESTRUCTIVE="1" as false (must be exactly "true")', () => {
+    const got = readChokepointEnv({
+      cfg: { chokepoint: { allowPrivateNetworks: false, denylist: [] } },
+      env: { GMFT_ALLOW_UNSANDBOXED_DESTRUCTIVE: '1' },
+    });
+    expect(got.allowUnsandboxedDestructive).toBe(false);
   });
 });

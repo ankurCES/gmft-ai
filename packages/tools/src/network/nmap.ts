@@ -32,7 +32,7 @@ export const NmapOutput = z.object({
   hosts: z.array(NmapHost),
   findings: z.array(z.any()),
   durationMs: z.number(),
-  mode: z.enum(['host', 'docker']),
+  mode: z.enum(['host', 'host+landlock', 'host+seccomp', 'host+landlock+seccomp', 'docker']),
   fellBack: z.boolean(),
 });
 export type NmapOutputT = z.infer<typeof NmapOutput>;

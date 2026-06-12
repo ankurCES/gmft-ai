@@ -30,6 +30,28 @@ export interface Turn {
    * scrubs user content — see `appendTurn` below.
    */
   supervisor?: SupervisorTurnRecord;
+  /**
+   * v0.2.D+ — the runner mode the host resolved to for this turn.
+   *
+   *   - `'docker'`         — tool ran inside a Docker container.
+   *   - `'host+landlock'`  — tool ran on the host under landlock.
+   *   - `'host'`           — tool ran on the host without landlock
+   *                          (operator opt-in via
+   *                          `GMFT_ALLOW_UNSANDBOXED_DESTRUCTIVE`).
+   *   - `'unsandboxed'`    — reserved for the case where the
+   *                          chokepoint *denied* a destructive call
+   *                          on the host; the operator-facing log
+   *                          still records the runner mode that
+   *                          *would* have applied. The audit log
+   *                          also writes a separate entry for the
+   *                          deny decision.
+   *
+   * Optional so v0.1 + v0.2.A logs (which lack the field)
+   * deserialize cleanly. Populated by the agent loop at the moment
+   * the tool is dispatched; the value flows from
+   * `pickRunnerMode()` in `@gmft/tools`.
+   */
+  runnerMode?: 'docker' | 'host' | 'host+landlock' | 'unsandboxed';
 }
 
 /**
