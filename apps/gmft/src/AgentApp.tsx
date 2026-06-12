@@ -40,6 +40,7 @@ import {
   type LlmConfig,
   type PromptEnv,
   type Severity,
+  type SupervisorFire,
 } from '@gmft/core';
 import {
   shellExecTool,
@@ -206,6 +207,31 @@ export function AgentApp({
     supervisor: 'quiet',
     fireCount: 0,
   }));
+
+  // v0.3.A.2 — supervisor fires accumulated this session. Each fire
+  // carries its own `targetEventId` (the runtime event id the rule
+  // fired on) and the `Message` it should attach to is found by
+  // matching `targetEventId` against any `Message.eventIds` entry.
+  // We use a state array (not a Set of fires) so the transcript can
+  // show multiple fires on the same target, in emission order. We
+  // dedupe by `targetEventId + kind + tool-or-quote-or-text` so a
+  // re-yield on re-render doesn't double up. Append-only for the life
+  // of the session — the array stays small (a runaway loop generates
+  // ~1 fire per turn at worst).
+  const [supervisorFires, setSupervisorFires] = useState<SupervisorFire[]>([]);
+
+  // v0.3.A.2 — set of `event.id` values that the supervisor fired on
+  // during the current session. Used by ChatTab to render a
+  // `SupervisorFireMarker` after the assistant message whose turn
+  // contained the fire. The set is append-only for the life of the
+  // session; we don't prune (sessions are short-lived and the set
+  // stays <1KB even with thousands of fires).
+  const supervisedEventIdsRef = useRef<Set<string>>(new Set());
+  // Per-turn collector: every event id we observe in the loop is pushed
+  // here, and the array is attached to the assistant message we create
+  // at the end of the turn. This lets ChatTab match the `targetEventId`
+  // on a `SupervisorFire` back to a transcript entry.
+  const currentTurnEventIdsRef = useRef<string[]>([]);
 
   // Rebuild the live model from the current (provider, model, key, endpoint).
   // `useMemo` is sufficient — there's no async work in the rebuild
@@ -435,7 +461,53 @@ export function AgentApp({
           // passing undefined is safe for A.2.
           chokepointSessionTarget: undefined,
         });
+        // v0.3.A.2 — start a fresh per-turn event-id collector. Every
+        // event the loop yields with an `id` field (tool-call-request,
+        // tool-result, etc.) gets pushed here, and we attach the array
+        // to the assistant message at the end of the turn so ChatTab
+        // can match a `supervisor-fire.targetEventId` back to a
+        // transcript line.
+        currentTurnEventIdsRef.current = [];
         for await (const ev of wrapped) {
+          // Capture event ids for the marker-rendering pass.
+          // `eventIds` are on tool-call-request / tool-result /
+          // confirmation-needed. Skip events without an id (text-delta,
+          // done, error, supervisor-fire's own id is the targetEventId,
+          // not an event we own).
+          if (
+            ev.type === 'tool-call-request' ||
+            ev.type === 'tool-result' ||
+            ev.type === 'confirmation-needed'
+          ) {
+            currentTurnEventIdsRef.current.push(ev.id);
+          } else if (ev.type === 'supervisor-fire') {
+            // Add to the session-wide set so the marker can be
+            // re-rendered if the user scrolls back. Backfill the
+            // per-turn collector too so the assistant message this
+            // turn creates carries the id in its eventIds.
+            supervisedEventIdsRef.current.add(ev.targetEventId);
+            if (!currentTurnEventIdsRef.current.includes(ev.targetEventId)) {
+              currentTurnEventIdsRef.current.push(ev.targetEventId);
+            }
+            // Append the fire to the session accumulator so ChatTab
+            // can render a `SupervisorFireMarker` next to the matching
+            // message. The accumulator survives across turns (the
+            // marker should re-render when the user scrolls back to
+            // an earlier message). Dedup is not strictly necessary —
+            // the supervisor yields each fire exactly once per event —
+            // but we guard against a future change that re-yields.
+            setSupervisorFires((prev) => {
+              const last = prev[prev.length - 1];
+              if (
+                last &&
+                last.targetEventId === ev.targetEventId &&
+                last.kind === ev.fire.kind
+              ) {
+                return prev;
+              }
+              return [...prev, ev.fire];
+            });
+          }
           if (ev.type === 'text-delta') {
             buffer += ev.text;
           } else if (ev.type === 'error') {
@@ -444,6 +516,10 @@ export function AgentApp({
               role: 'assistant',
               content: `[error] ${ev.error.message}`,
               ts: startedAt,
+              // v0.3.A.2 — preserve any events captured before the
+              // error so a supervisor-fire that triggered the abort
+              // still gets a marker in the transcript.
+              eventIds: [...currentTurnEventIdsRef.current],
             };
           } else if (ev.type === 'tool-result') {
             // v0.1 phase 6 — update the live status bar.
@@ -512,6 +588,11 @@ export function AgentApp({
           role: 'assistant',
           content: finalText,
           ts: startedAt,
+          // v0.3.A.2 — snapshot the per-turn event id collector so the
+          // ChatTab can match each `SupervisorFire.targetEventId` back
+          // to a transcript line. Copy (not freeze) because the ref
+          // gets reset on the next turn.
+          eventIds: [...currentTurnEventIdsRef.current],
         };
         // Persist + forward.
         if (session) {
@@ -524,6 +605,10 @@ export function AgentApp({
           role: 'assistant',
           content: finalText,
           ts: startedAt,
+          // v0.3.A.2 — surface the captured event ids so the parent
+          // component (App) can attach them to the same Msg it stores
+          // in messages[]. Matches `assistantMsg.eventIds` above.
+          eventIds: [...currentTurnEventIdsRef.current],
         };
       } catch (err) {
         return {
@@ -531,6 +616,10 @@ export function AgentApp({
           role: 'assistant',
           content: `[error] ${err instanceof Error ? err.message : String(err)}`,
           ts: startedAt,
+          // v0.3.A.2 — preserve captured event ids on throw too
+          // (e.g. broker race) so the marker-rendering pass still
+          // has a target.
+          eventIds: [...currentTurnEventIdsRef.current],
         };
       }
     },
@@ -547,6 +636,9 @@ export function AgentApp({
       onExit={onExit ?? handleExit}
       pendingApprovals={pendingApprovals}
       onApprovalResolve={resolveApproval}
+      // v0.3.A.2 — fires accumulated this session, used by ChatTab to
+      // render SupervisorFireMarker lines next to the matching message.
+      supervisorFires={supervisorFires}
     />
   );
 }

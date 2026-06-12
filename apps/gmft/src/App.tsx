@@ -8,7 +8,7 @@ import { ApprovalPrompt } from './ui/components/ApprovalPrompt.js';
 import type { Message as Msg } from './ui/components/Message.js';
 import { makeTheme, type Theme } from './ui/theme.js';
 import type { StatusInfo } from './ui/components/StatusRail.js';
-import type { Finding } from '@gmft/core';
+import type { Finding, SupervisorFire } from '@gmft/core';
 import { FindingsStore, defaultReportPath } from '@gmft/tools';
 
 export type { TabId };
@@ -73,6 +73,15 @@ export interface AppProps {
    */
   baseDir?: string;
   sessionId?: string;
+  /**
+   * v0.3.A.2 — supervisor fires accumulated this session. Each fire
+   * carries a `targetEventId` pointing to a runtime event whose
+   * transcript entry should be marked. ChatTab renders a
+   * `SupervisorFireMarker` after every message whose `eventIds`
+   * contains a fire's `targetEventId`. The parent (AgentApp) owns the
+   * accumulator; App is presentational.
+   */
+  supervisorFires?: SupervisorFire[];
 }
 
 const TAB_ORDER: TabId[] = ['chat', 'findings', 'help'];
@@ -93,6 +102,7 @@ export function App({
   onApprovalResolve,
   baseDir,
   sessionId,
+  supervisorFires = [],
 }: AppProps): React.JSX.Element {
   const theme: Theme = makeTheme(themeName);
   const { exit } = useApp();
@@ -283,6 +293,11 @@ export function App({
           status={status}
           onSubmit={handleSubmit}
           theme={theme}
+          // v0.3.A.2 — fires to render markers for, in emission order.
+          // ChatTab matches each `fire.targetEventId` against
+          // `message.eventIds` to decide which message gets a marker
+          // and where to slot it.
+          supervisorFires={supervisorFires}
         />
       )}
       {activeTab === 'findings' && (

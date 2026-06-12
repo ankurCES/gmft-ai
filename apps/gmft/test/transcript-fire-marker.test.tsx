@@ -1,5 +1,5 @@
 /**
- * v0.2.A.3 — SupervisorFireMarker tests.
+ * v0.2.A.3 — `SupervisorFireMarker` unit tests.
  *
  * The marker is the per-fire renderable line that the TUI shows below
  * a transcript line whose id matches a `supervisor-fire.targetEventId`.
@@ -15,7 +15,8 @@
  * supervisor-fire events are currently unrendered). The marker is
  * the smallest renderable unit that satisfies the contract — the
  * AgentApp-level wiring (deciding which messages get a marker) is
- * separate work.
+ * the v0.3.A.2 work, tested in `chat-tab-fire-marker.test.tsx` and
+ * `agent-app-fire-wiring.test.tsx`.
  */
 
 import { describe, it, expect } from 'vitest';
