@@ -4,6 +4,93 @@ All notable changes to GMFT-AI are documented here.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning: [Semantic](https://semver.org/).
 
+## [0.2.0] — 2026-06-17
+
+First 0.2 release. Aggregates the v0.2.A (multi-agent
+supervisor) and v0.2.D (host-sandbox) slices plus the v0.2
+close-out fixes.
+
+### Highlights
+
+- **Multi-agent supervisor** (v0.2.A) — post-hoc loop-detector
+  + overclaim-detector + plan-issue-detector + end-of-turn
+  postmortem. Silent by default (3-rule fast path + 3-rule
+  end-of-turn check). `withSupervisor` wraps any `runTurn`
+  with the 6 supervisor triggers and the 4-section postmortem
+  generator. StatusRail shows the 3 supervisor states (quiet /
+  fires / postmortem). `SupervisorFireMarker` is the inline
+  ⚠ marker in the transcript. Session log migrated v0.1 → v0.2
+  transparently via `schemaVersion: 1 | 2`.
+- **Host-sandbox enforcement** (v0.2.D) — when the runner
+  falls back to host mode, the child process now has a
+  kernel-enforced sandbox: **landlock** (filesystem ACL) when
+  the kernel supports it (5.13+, June 2021; Ubuntu 22.04+,
+  Fedora 35+), **seccomp** (syscall filter) when the kernel
+  supports it. The new `requiresSandbox` chokepoint rule
+  **denies** destructive/elevated tools when neither Docker
+  nor landlock is available (the secure default; opt-out via
+  `GMFT_ALLOW_UNSANDBOXED_DESTRUCTIVE=true`). The StatusRail
+  surfaces the resolved mode (4 states: docker/host+kernel
+  green, host yellow ⚠, unsandboxed red ✗). The `--sandbox=
+  docker|host|auto` CLI flag lets the user override the
+  auto-resolution. **ADR-0011** documents the policy.
+
+### Sub-slices (in release order)
+
+- [0.2.0-A.1](#020-a1--2026-06-11) — supervisor A.1 (3 rules
+  + wrapper, 30 tests)
+- [0.2.0-A.2](#020-a2--2026-06-12) — supervisor A.2 (TUI
+  surfacing + 5 tests)
+- [0.2.0-A.3](#020-a3--2026-06-12) — supervisor A.3
+  (postmortem + 54 tests)
+- [0.2.0-D.1](#020-d1--2026-06-17) — D.0 landlock-shim + D.1.1
+  primitives + D.1.3 seccomp (53 tests)
+- [0.2.0-D.2](#020-d2--2026-06-17) — D.2 chokepoint requires-
+  sandbox rule + StatusRail/CLI surfacing + e2e (28 tests)
+- [0.2.0-D.3](#020-d3--2026-06-17) — ADR-0011 (docs-only)
+
+### Close-out fixes (post-0.2.0-D.3)
+
+- ESM `require()` removal in `capabilities.ts`, `landlock.ts`,
+  `seccomp.ts` — the gmft CLI crashed at runtime with
+  `'require is not defined'`. Now uses top-level ESM imports.
+  The shim lazy-load was a cargo-cult optimization; the
+  non-Linux guards remain in place.
+- `stream.test.ts` flake (~1/3 rate on GH Actions Node 20) —
+  child now uses `setImmediate` between writes so the pipe
+  drains. Test assertion changed to `toBeGreaterThanOrEqual(2)`.
+
+### Tests
+
+- 497 tests green (1 testkit + 211 core + 136 tools + 149 gmft).
+  v0.2 added 220 tests since v0.1.0.
+- `pnpm -r build`, `pnpm -r typecheck`, `pnpm -r test` all
+  clean. CI green on Node 20 + Node 22 matrix.
+- `pnpm dev --sandbox=host` runs the full CLI past the
+  v0.2.D chokepoint layer.
+
+### Migration from 0.1.0
+
+- Session logs auto-migrate from `schemaVersion: 1` to
+  `schemaVersion: 2` on read. The supervisor field is parsed
+  only if the version is 2.
+- Destructive/elevated tools are now **denied by default** on
+  hosts without Docker and without kernel landlock. Set
+  `GMFT_ALLOW_UNSANDBOXED_DESTRUCTIVE=true` to restore the old
+  "warn + proceed" behavior. The override is documented but
+  not recommended.
+- The audit log's `runnerMode` field is new; older log readers
+  (v0.1.0 and earlier) will ignore it.
+
+### Known issues
+
+- The compiled `dist/cli.js` artifact cannot be run with plain
+  `node` (ESM extensionless imports fail at runtime). The
+  `dev` script (`tsx ./src/cli.tsx`) is the documented run
+  path. Fixing the `dist` runtime is a v0.3 backlog item.
+- Pre-existing flake in `stream.test.ts` is fixed; no other
+  known flakes as of v0.2.0.
+
 ## [0.2.0-D.3] — 2026-06-17
 
 Docs-only slice. D.3 deliverable promised in
