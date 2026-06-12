@@ -3,6 +3,35 @@ import type { Severity } from '@gmft/core';
 import type { Theme } from '../theme.js';
 
 /**
+ * v0.2.D — the union of sandbox modes the rail can display.
+ *   - `'docker'`           — containerized runner (default for the docker resolver).
+ *   - `'host+landlock'`    — host runner with kernel landlock fs-allowlist.
+ *   - `'host+seccomp'`     — host runner with kernel seccomp syscall-allowlist.
+ *   - `'host+landlock+seccomp'` — both kernel layers applied.
+ *   - `'host'`             — bare host runner; no kernel enforcement.
+ *   - `'unsandboxed'`      — the chokepoint denied the call; recorded for audit.
+ *   - `'unknown'`          — boot state, before the first tool runs.
+ *
+ * `'host'` is the only one that triggers the persistent ⚠ — the kernel-enforced
+ * modes (`host+landlock`, `host+seccomp`, `host+landlock+seccomp`) are *safer*
+ * than a `docker` runner with a permissive profile, so they don't need a
+ * warning glyph.
+ *
+ * `'unsandboxed'` is what the audit log records when the chokepoint denied a
+ * destructive/elevated call because no sandbox was available; the rail shows
+ * it as a red "unsandboxed" with a ✗ so the user can correlate a denied call
+ * with the rail state.
+ */
+export type SandboxMode =
+  | 'docker'
+  | 'host+landlock'
+  | 'host+seccomp'
+  | 'host+landlock+seccomp'
+  | 'host'
+  | 'unsandboxed'
+  | 'unknown';
+
+/**
  * v0.2.A.3 — the supervisor's high-level state for the current turn.
  * Drives the Supervisor field in the StatusRail. Pure UI state — the
  * rule engine in `@gmft/core/agent/supervisor-rules` produces the
@@ -15,7 +44,7 @@ export type SupervisorState = 'quiet' | 'fires' | 'postmortem';
 export interface StatusInfo {
   model: string;
   provider: string;
-  sandbox: 'docker' | 'host' | 'unknown';
+  sandbox: SandboxMode;
   target?: string;
   tokensIn: number;
   tokensOut: number;
@@ -43,8 +72,6 @@ export interface StatusInfo {
 }
 
 export function StatusRail({ status, theme }: { status: StatusInfo; theme: Theme }): React.JSX.Element {
-  const sandboxLabel =
-    status.sandbox === 'host' ? theme.warn('⚠ host ') : theme.ok(status.sandbox);
   return (
     <Box
       flexDirection="column"
@@ -63,7 +90,7 @@ export function StatusRail({ status, theme }: { status: StatusInfo; theme: Theme
             </>
           )}
           {theme.muted('  sandbox ')}
-          {sandboxLabel}
+          <SandboxField status={status} theme={theme} />
           {theme.muted('  supervisor ')}
           <SupervisorField status={status} theme={theme} />
         </Text>
@@ -111,6 +138,66 @@ function SupervisorField({ status, theme }: { status: StatusInfo; theme: Theme }
   }
   // 'quiet' — dim via theme
   return <Text dimColor>{renderSupervisorField(status)}</Text>;
+}
+
+/**
+ * Pure render of the Sandbox field. Public for unit testing.
+ *
+ *   - `'docker'`                  → `docker` (green)
+ *   - `'host+landlock'`           → `host+landlock` (green) — kernel-enforced
+ *   - `'host+seccomp'`            → `host+seccomp` (green) — kernel-enforced
+ *   - `'host+landlock+seccomp'`   → `host+landlock+seccomp` (green) — both
+ *   - `'host'`                    → `⚠ host` (yellow) — persistent warning
+ *   - `'unsandboxed'`             → `✗ unsandboxed` (red) — chokepoint denied
+ *   - `'unknown'`                 → `unknown` (dim) — boot state
+ *
+ * The persistent ⚠ on `'host'` is the v0.1 fallback banner. The
+ * kernel-enforced host modes (`host+landlock` and friends) do NOT show a
+ * warning — the kernel is enforcing, so the blast radius is bounded even
+ * though we're on the host.
+ */
+export function renderSandboxField(mode: SandboxMode): string {
+  switch (mode) {
+    case 'docker':
+      return 'docker';
+    case 'host+landlock':
+      return 'host+landlock';
+    case 'host+seccomp':
+      return 'host+seccomp';
+    case 'host+landlock+seccomp':
+      return 'host+landlock+seccomp';
+    case 'host':
+      return '⚠ host';
+    case 'unsandboxed':
+      return '✗ unsandboxed';
+    case 'unknown':
+      return 'unknown';
+  }
+}
+
+/**
+ * v0.2.D — the JSX wrapper for the Sandbox field. Color-codes each mode
+ * so the eye can spot a host fallback in one glance:
+ *   - green: docker + any kernel-enforced host mode (safe)
+ *   - yellow: bare host (⚠ — the persistent fallback warning)
+ *   - red: unsandboxed (✗ — the chokepoint denied; something IS off)
+ *   - dim: unknown (boot state, before the first tool result)
+ */
+function SandboxField({ status, theme }: { status: StatusInfo; theme: Theme }): React.JSX.Element {
+  const label = renderSandboxField(status.sandbox);
+  switch (status.sandbox) {
+    case 'docker':
+    case 'host+landlock':
+    case 'host+seccomp':
+    case 'host+landlock+seccomp':
+      return <Text color="green">{label}</Text>;
+    case 'host':
+      return <Text color="yellow">{label}</Text>;
+    case 'unsandboxed':
+      return <Text color="red">{label}</Text>;
+    case 'unknown':
+      return <Text dimColor>{label}</Text>;
+  }
 }
 
 /**
