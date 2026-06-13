@@ -259,11 +259,16 @@ function pdfReportsDir(): string {
   return reportsDir();
 }
 
-function defaultPdfPath(sessionId: string): string {
+/**
+ * Default PDF report path: `${reportsDir()}/${sessionId}.pdf`.
+ * Exported so the CLI's `--report pdf` flag (and tests) can predict
+ * the path without running the tool.
+ */
+export function defaultPdfPath(sessionId: string): string {
   return join(pdfReportsDir(), `${sessionId}.pdf`);
 }
 
-function resolvePdfOutputPath(
+export function resolvePdfOutputPath(
   requested: string,
   sessionId: string,
 ): string {

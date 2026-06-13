@@ -14,6 +14,19 @@ export * from './shared/stream.js';
 export * from './shell/shell-exec.js';
 export * from './network/index.js';
 export * from './reports/selections.js';
-export { defaultReportPath, reportsDir, resolveOutputPath } from './reports/write.js';
+export {
+  defaultReportPath,
+  reportsDir,
+  resolveOutputPath,
+  buildJsonReport,
+  type ReportFormat,
+} from './reports/write.js';
+export {
+  renderPdfBuffer,
+  resolvePdfOutputPath,
+  defaultPdfPath,
+  type PdfReportMeta,
+  type PdfRenderer,
+} from './reports/pdf.js';
 export { FindingsStore, type FindingsStoreOpts, type Finding, type Severity, FindingSchema, SeveritySchema } from '@gmft/core';
 export { tools, shellExecTool, nmapTool, dnsenumTool, theHarvesterTool, whatwebTool, reportWriteTool, reportPdfTool } from './catalog.js';
