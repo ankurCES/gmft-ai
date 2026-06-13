@@ -35,4 +35,32 @@ describe('tools catalog — wifi tools registered', () => {
     expect(wifiDeauthTool.name).toBe('wifi_deauth');
     expect(wifiteScanTool.name).toBe('wifite_scan');
   });
+
+  it('registers v0.3.B network + web + wifi tool additions', () => {
+    const names = tools.map((t) => t.name);
+    // 7 new network tools
+    expect(names).toContain('masscan');
+    expect(names).toContain('rustscan');
+    expect(names).toContain('subfinder');
+    expect(names).toContain('dnsrecon');
+    expect(names).toContain('fierce');
+    expect(names).toContain('enum4linux');
+    expect(names).toContain('ldapsearch');
+    // 3 new web tools
+    expect(names).toContain('httpx');
+    expect(names).toContain('wpscan');
+    expect(names).toContain('snmpcheck');
+    // 3 new wifi tools
+    expect(names).toContain('bettercap');
+    expect(names).toContain('aircrack');
+    expect(names).toContain('kismet');
+    // new report tool
+    expect(names).toContain('report_pdf');
+
+    // Categories should reflect the tool kind.
+    expect(tools.find((t) => t.name === 'masscan')?.category).toBe('recon');
+    expect(tools.find((t) => t.name === 'httpx')?.category).toBe('binary');
+    expect(tools.find((t) => t.name === 'aircrack')?.category).toBe('binary');
+    expect(tools.find((t) => t.name === 'report_pdf')?.category).toBe('file');
+  });
 });

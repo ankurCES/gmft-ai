@@ -53,7 +53,7 @@ const FOUND_IP = /^Found:\s+(\S+)\s+->\s+(\S+)/;
 const FOUND_BARE = /^Found:\s+(\S+)\s*$/;
 
 export function parseFierceOutput(stdout: string): FierceParsedT {
-  const hosts: FierceHost[] = [];
+  const hosts: FierceHostT[] = [];
   if (!stdout || stdout.trim() === '') {
     return { hosts, count: 0 };
   }

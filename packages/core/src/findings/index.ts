@@ -12,6 +12,7 @@ export const FindingSchema = z.object({
   description: z.string().optional(),
   evidence: z.string().optional(),
   ts: z.number().int().nonnegative(),
+  meta: z.record(z.string(), z.unknown()).optional(),
 });
 
 export type Finding = z.infer<typeof FindingSchema>;

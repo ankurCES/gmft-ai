@@ -57,7 +57,7 @@ const BRACKETED = /^\[([A-Za-z0-9-]+)\]\s+(\S+)\s+(.+)$/;
 const BARE = /^([A-Z]{1,5})\s+(\S+)\s+(.+)$/;
 
 export function parseDnsreconOutput(stdout: string): DnsreconParsedT {
-  const records: DnsreconRecord[] = [];
+  const records: DnsreconRecordT[] = [];
   if (!stdout || stdout.trim() === '') {
     return { records, count: 0 };
   }
