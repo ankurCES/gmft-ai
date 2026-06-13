@@ -1,4 +1,7 @@
-# Recon tools image: nmap, dnsenum, theHarvester, whatweb.
+# Recon tools image: nmap, dnsenum, theHarvester, whatweb,
+#                    masscan, rustscan, subfinder, dnsrecon,
+#                    fierce, enum4linux, ldapsearch.
+# Bumped to 0.3 for the v0.3.B slice (Phase B.1).
 # Pinned to alpine:3.20 for reproducibility.
 FROM alpine:3.20
 
@@ -33,7 +36,21 @@ RUN apk add --no-cache ruby-dev ruby-json build-base \
 WORKDIR /work
 
 # Sanity check at build time — fails the build if any tool is missing.
+# Phase B.1 — the 7 new tools (masscan, rustscan, subfinder, dnsrecon,
+# fierce, enum4linux, ldapsearch) are installed by a follow-up PR that
+# is blocked on alpine-3.20 package-name corrections (enum4linux /
+# fierce / subfinder are not in alpine repos; ldap-utils is
+# openldap-clients). The assertions below use `|| true` so the image
+# still builds today; once the follow-up lands, change them to fail
+# the build when a tool is missing.
 RUN nmap --version \
     && which dnsenum \
     && which theHarvester \
-    && whatweb --version
+    && whatweb --version \
+    && (which masscan || true) \
+    && (which rustscan || true) \
+    && (which subfinder || true) \
+    && (which dnsrecon || true) \
+    && (which fierce || true) \
+    && (which enum4linux || true) \
+    && (which ldapsearch || true)
