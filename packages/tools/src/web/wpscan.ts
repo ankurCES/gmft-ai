@@ -152,16 +152,18 @@ export function parseWpscanOutput(text: string): WpscanParsed {
     // e.g. "[+] WordPress user : admin" or "[+] Headers".
     if (section === 'plugins') {
       const pluginHeader = line.match(/^\[\+\]\s+([a-z0-9][a-z0-9._-]*)\s*$/i);
-      if (pluginHeader) {
-        out.plugins.push({ name: pluginHeader[1], outdated: false });
+      const headerName = pluginHeader?.[1];
+      if (headerName) {
+        out.plugins.push({ name: headerName, outdated: false });
         continue;
       }
       // Vulnerability indented under a plugin: " | [!] Title: ..."
       const pluginVuln = line.match(/^\|\s+\[!\] Title:\s+(.+)/);
-      if (pluginVuln && out.plugins.length > 0) {
+      const pluginVulnTitle = pluginVuln?.[1];
+      if (pluginVulnTitle && out.plugins.length > 0) {
         out.vulnerabilities.push({
-          title: pluginVuln[1],
-          component: out.plugins[out.plugins.length - 1].name,
+          title: pluginVulnTitle,
+          component: out.plugins[out.plugins.length - 1]!.name,
           componentType: 'plugin',
         });
         continue;
@@ -174,8 +176,9 @@ export function parseWpscanOutput(text: string): WpscanParsed {
     // (a single in-use theme) and also under "[+] Theme(s)" listings.
     // The in-use theme is always printed before the Plugin(s) section.
     const themeInUse = line.match(/^\[\+\]\s+WordPress theme in use:\s+(.+?)\s*$/);
-    if (themeInUse) {
-      out.themes.push({ name: themeInUse[1], outdated: false });
+    const themeInUseName = themeInUse?.[1];
+    if (themeInUseName) {
+      out.themes.push({ name: themeInUseName, outdated: false });
       continue;
     }
 
@@ -186,10 +189,11 @@ export function parseWpscanOutput(text: string): WpscanParsed {
     // "users".
     if (section !== 'plugins' && section !== 'users' && out.themes.length > 0) {
       const themeVuln = line.match(/^\|\s+\[!\] Title:\s+(.+)/);
-      if (themeVuln) {
+      const themeVulnTitle = themeVuln?.[1];
+      if (themeVulnTitle) {
         out.vulnerabilities.push({
-          title: themeVuln[1],
-          component: out.themes[out.themes.length - 1].name,
+          title: themeVulnTitle,
+          component: out.themes[out.themes.length - 1]!.name,
           componentType: 'theme',
         });
         continue;
@@ -201,8 +205,9 @@ export function parseWpscanOutput(text: string): WpscanParsed {
     // under the [i] User(s) Identified: block.
     if (section === 'users') {
       const userMatch = line.match(/^\[[+i]\]\s+(\S+)\s*$/);
-      if (userMatch) {
-        out.usernames.push({ username: userMatch[1] });
+      const username = userMatch?.[1];
+      if (username) {
+        out.usernames.push({ username });
         continue;
       }
     }

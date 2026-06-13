@@ -93,7 +93,7 @@ export function parseBettercapOutput(stdout: string): {
     const apMatch = line.match(WIFI_AP_RE);
     if (apMatch?.groups) {
       const { bssid, ssid, enc, signal } = apMatch.groups;
-      if (!aps.has(bssid)) {
+      if (bssid && !aps.has(bssid)) {
         aps.set(bssid, {
           bssid,
           ssid: ssid || undefined,
@@ -107,7 +107,7 @@ export function parseBettercapOutput(stdout: string): {
     const bleMatch = line.match(BLE_DEVICE_RE);
     if (bleMatch?.groups) {
       const { mac, name, rssi } = bleMatch.groups;
-      if (!ble.has(mac)) {
+      if (mac && !ble.has(mac)) {
         ble.set(mac, {
           mac,
           name: name || undefined,

@@ -47,6 +47,7 @@ export function parseHttpxOutput(text: string): HttpxLine[] {
     );
     if (!m) continue;
     const [, url, statusCode, contentLength, title] = m;
+    if (!url) continue;
     const line0: HttpxLine = { url };
     if (statusCode) line0.statusCode = Number(statusCode);
     if (contentLength) line0.contentLength = Number(contentLength);

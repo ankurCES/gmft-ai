@@ -80,11 +80,11 @@ export function parseSnmpcheckOutput(stdout: string): {
 
     // Section header: "[*] System information:"
     const sec = line.match(SECTION_RE);
-    if (sec) {
-      const name = sec[1].toLowerCase();
-      if (name.startsWith('system information')) section = 'system';
-      else if (name.startsWith('network interfaces')) section = 'interfaces';
-      else if (name.startsWith('tcp connections') || name.startsWith('listening ports'))
+    const secName = sec?.[1]?.toLowerCase();
+    if (secName) {
+      if (secName.startsWith('system information')) section = 'system';
+      else if (secName.startsWith('network interfaces')) section = 'interfaces';
+      else if (secName.startsWith('tcp connections') || secName.startsWith('listening ports'))
         section = 'listening';
       else section = 'other';
       sectionHadContent = false;
@@ -108,8 +108,10 @@ export function parseSnmpcheckOutput(stdout: string): {
     if (section === 'system') {
       // "Hostname: router" — split on first colon.
       const kv = line.match(/^([^:]+):\s+(.+?)\s*$/);
-      if (kv) {
-        out.systemInfo[kv[1].trim()] = kv[2];
+      const k = kv?.[1]?.trim();
+      const v = kv?.[2];
+      if (k && v) {
+        out.systemInfo[k] = v;
       }
       continue;
     }
@@ -118,8 +120,9 @@ export function parseSnmpcheckOutput(stdout: string): {
       // Each interface block starts with "Interface:        [ up ] eth0"
       // and has indented sub-lines we ignore.
       const iface = line.match(/^Interface:\s+(.+?)\s*$/);
-      if (iface) {
-        out.interfaces.push(iface[1]);
+      const ifaceName = iface?.[1];
+      if (ifaceName) {
+        out.interfaces.push(ifaceName);
         continue;
       }
       // We could also collect IP/MAC here; for now we only record
