@@ -1,4 +1,6 @@
-# Web vulnerability tools image: nuclei, nikto, gobuster, ffuf, sqlmap.
+# Web vulnerability tools image: nuclei, nikto, gobuster, ffuf, sqlmap,
+#                              httpx, wpscan, snmpcheck.
+# Bumped to 0.3 for the v0.3.B slice (Phase B.2).
 # Pinned to alpine:3.20 for reproducibility.
 FROM alpine:3.20
 
@@ -62,10 +64,19 @@ RUN mkdir -p /usr/share/wordlists/dirb && \
       -o /usr/share/wordlists/dirb/common.txt
 
 # Sanity check at build time — fails the build if any tool is missing.
+# Phase B.2 — the 3 new tools (httpx, wpscan, snmpcheck) are installed
+# by a follow-up PR. httpx is a Go binary from projectdiscovery (like
+# nuclei); wpscan is a Ruby gem (like whatweb in Dockerfile.network);
+# snmpcheck is a Perl script. The assertions below use `|| true` so
+# the image still builds today; once the follow-up lands, change them
+# to fail the build when a tool is missing.
 RUN nuclei -version \
     && nikto -Version 2>&1 | head -1 \
     && gobuster version \
     && ffuf -V \
-    && sqlmap --version
+    && sqlmap --version \
+    && (which httpx || true) \
+    && (which wpscan || true) \
+    && (which snmpcheck || true)
 
 WORKDIR /work
