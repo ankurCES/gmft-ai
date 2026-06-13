@@ -29,6 +29,7 @@ import { bindProviderUI } from './onboard/bind-provider-ui.js';
 import { SessionStore } from './session/store.js';
 import { parseSandboxFlag } from './sandbox-flag.js';
 import { writePostExitReport, parseReportFormat } from './report-flag.js';
+import { loadScopeFile, ScopeFileError } from './scope-file.js';
 
 const cli = meow(
   `
@@ -60,6 +61,12 @@ const cli = meow(
                         ".." segments are rejected. Format is chosen by
                         --report-format (default json).
     --report-format <f>  json | pdf (default json). Only meaningful with --report.
+    --scope <path>      Load a scope file (JSON: { "allow": ["host1", "host2"] })
+                        and apply it to the chokepoint for this invocation.
+                        The chokepoint denies any 'targetRequired' tool call
+                        whose 'args.target' is not in the allow list. Per-
+                        invocation only — not persisted to config.toml.
+                        Bad path / bad shape / illegal entry → exit 1.
     --help              Show this help
     --version           Show version
 
@@ -72,6 +79,7 @@ const cli = meow(
     $ gmft --supervisor-model claude-haiku-4-5
     $ gmft --report ./scan-2026-06-17.json
     $ gmft --report ./scan.pdf --report-format pdf
+    $ gmft --scope ./prod-scope.json --target scanme.nmap.org
 `,
   {
     importMeta: import.meta,
@@ -84,6 +92,7 @@ const cli = meow(
       supervisorModel: { type: 'string' },
       report: { type: 'string' },
       reportFormat: { type: 'string', default: 'json' },
+      scope: { type: 'string' },
     },
   },
 );
@@ -183,6 +192,36 @@ try {
 } catch (err) {
   console.error(err instanceof Error ? err.message : String(err));
   process.exit(1);
+}
+
+// v0.3.B — load the --scope file (if any) and resolve it to a
+// frozen allowlist. Bad path / bad shape / illegal entry all exit 1
+// with a clear message — same policy as --sandbox. Per-invocation
+// only: the allowlist lives in the chokepoint env, not in
+// config.toml. A future ADR may add a persisted `chokepoint.allowlist`
+// field; today the CLI is the only entry point.
+let scopeAllowlist: readonly string[] = [];
+if (cli.flags.scope) {
+  try {
+    const loaded = loadScopeFile(cli.flags.scope);
+    scopeAllowlist = loaded.allow;
+    // Surface the load to stderr so a user running with a fresh
+    // TTY can see "scope loaded: N entries" before the TUI mounts.
+    // Keep the wording parseable: it shows up in transcripts.
+    console.error(
+      `--scope: loaded ${loaded.allow.length} entr${loaded.allow.length === 1 ? 'y' : 'ies'} from ${loaded.source}`,
+    );
+  } catch (err) {
+    if (err instanceof ScopeFileError) {
+      console.error(`--scope: ${err.code}: ${err.message}`);
+    } else {
+      console.error(
+        '--scope: failed to load:',
+        err instanceof Error ? err.message : String(err),
+      );
+    }
+    process.exit(1);
+  }
 }
 
 const initialStatus = {
@@ -307,6 +346,11 @@ const { waitUntilExit } = render(
     ...(cli.flags.supervisorModel
       ? { supervisorModelId: cli.flags.supervisorModel }
       : {}),
+    // v0.3.B — per-invocation allowlist from --scope <path>.
+    // Empty array is the no-op default; AgentApp itself filters
+    // out the empty case before calling readChokepointEnv so the
+    // back-compat path is byte-for-byte identical to pre-v0.3.B.
+    ...(scopeAllowlist.length > 0 ? { allowlist: scopeAllowlist } : {}),
     onTurnComplete: ({ user, assistant }) => {
       // Persist both halves of the turn. The store is async but the
       // TUI's onTurnComplete is fire-and-forget here — we log on

@@ -51,6 +51,12 @@ const env: ChokepointEnv = {
   allowPrivateNetworks: false,
   allowElevation: true, // attack_chain has `requiresElevation`
   denylist: [],
+  // v0.3.B — empty allowlist is the back-compat default. The test
+  // predates the allowlist field; the new rule in `checkTarget`
+  // reads `env.allowlist.length` so the field must be present
+  // (or the test crashes with "Cannot read properties of
+  // undefined").
+  allowlist: [],
 };
 
 /** Build a `runInner` invocation where the chain's `innerRunner` is

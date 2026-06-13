@@ -105,18 +105,33 @@ export function ApprovalPrompt({
   // Truncate the args dump for display. Long argv arrays would
   // blow up the terminal; the audit log retains the full payload.
   const argsSummary = summarizeArgs(args);
+  // v0.3.B — destructive warning surface. When the chokepoint decided
+  // `type-then-confirm`, the user is one keystroke from running a
+  // tool that can drop packets, take down a service, or compromise
+  // a host. The visual treatment is intentionally louder than a
+  // plain `confirm`:
+  //   - red border (vs. yellow)
+  //   - a `DESTRUCTIVE  ` prefix in the header
+  //   - the literal-typing instructions in red
+  // Pulsing (a keystroke landing here) still overrides the border
+  // so the user can see their input is being routed.
+  const isDestructive = prompt !== undefined;
+  const baseBorder = isDestructive ? 'red' : 'yellow';
 
   return (
     <Box
       flexDirection="column"
       borderStyle="round"
-      borderColor={pulsed ? 'magenta' : 'yellow'}
+      borderColor={pulsed ? 'magenta' : baseBorder}
       paddingX={1}
       marginBottom={1}
     >
       <Box>
         <Text>
-          {theme.warn(`⚠ chokepoint ${prompt !== undefined ? 'type-to-confirm  ' : 'confirm  '}`)}
+          {isDestructive
+            ? <Text color="red" bold>{`DESTRUCTIVE  `}</Text>
+            : theme.warn(`⚠ chokepoint confirm  `)}
+          {!isDestructive ? null : theme.warn('chokepoint type-to-confirm  ')}
           {theme.muted('id=')}
           {id}
         </Text>
@@ -136,22 +151,22 @@ export function ApprovalPrompt({
       <Box marginTop={1}>
         <Text wrap="wrap">
           {theme.muted('why   ')}
-          <Text color="yellow">{reason}</Text>
+          <Text color={isDestructive ? 'red' : 'yellow'}>{reason}</Text>
         </Text>
       </Box>
-      {prompt !== undefined ? (
+      {isDestructive ? (
         <>
           <Box marginTop={1}>
             <Text>
-              {theme.muted('type  ')}
-              <Text color="cyan">{prompt}</Text>
-              {theme.muted('  then press ')}
+              <Text color="red" bold>{'type  '}</Text>
+              <Text color="red">{prompt}</Text>
+              <Text color="red">{'  then press '}</Text>
               <Text color="green">[Enter]</Text>
             </Text>
           </Box>
           <Box>
             <Text>
-              {theme.muted('input ')}
+              <Text color="red" bold>{'input '}</Text>
               <Text color={typed === prompt ? 'green' : 'gray'}>[{typed || ' '}]</Text>
               <Text color="gray">_</Text>
             </Text>

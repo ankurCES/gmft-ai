@@ -31,6 +31,11 @@ function env(overrides: Partial<ChokepointEnv> = {}): ChokepointEnv {
     allowPrivateNetworks: false,
     allowElevation: false,
     denylist: [],
+    // v0.3.B — empty allowlist is the back-compat default. Tests
+    // in this file predate the allowlist field; the new rule in
+    // `checkTarget` reads `env.allowlist.length` so we must set it
+    // to `[]` (not omit it).
+    allowlist: [],
     runnerCapabilities: hostCaps,
     allowUnsandboxedDestructive: false,
     ...overrides,

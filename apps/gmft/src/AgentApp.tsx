@@ -149,6 +149,15 @@ export interface AgentAppProps
    * to unmount; tests assert the call via this spy.
    */
   onExit?: () => void;
+  /**
+   * v0.3.B — per-invocation allowlist loaded from `--scope <path>`.
+   * When non-empty, the chokepoint denies any `targetRequired` tool
+   * call whose `args.target` is not in the list. Loaded by `cli.tsx`
+   * at boot; AgentApp just threads it through to `readChokepointEnv`.
+   * Undefined / empty = no allowlist (back-compat with pre-v0.3.B
+   * operators).
+   */
+  allowlist?: readonly string[];
 }
 
 export function AgentApp({
@@ -161,6 +170,7 @@ export function AgentApp({
   onTurnComplete,
   onExit,
   supervisorModelId,
+  allowlist,
   ...appProps
 }: AgentAppProps): React.JSX.Element {
   const system = useMemo(() => buildSystemPrompt('agent', env), [env]);
@@ -468,7 +478,14 @@ export function AgentApp({
       // The cached ref means subsequent submits reuse the gate.
       if (chokepointRef.current === null) {
         chokepointRef.current = createChokepoint(
-          readChokepointEnv({ cfg: loadConfig(), ...(sessionTarget ? { sessionTarget } : {}) }),
+          readChokepointEnv({
+            cfg: loadConfig(),
+            ...(sessionTarget ? { sessionTarget } : {}),
+            // v0.3.B — per-invocation allowlist from --scope. Empty
+            // array is the back-compat no-op; non-empty array is
+            // enforced by `checkTarget` after the denylist check.
+            ...(allowlist && allowlist.length > 0 ? { allowlist } : {}),
+          }),
         );
       }
       try {

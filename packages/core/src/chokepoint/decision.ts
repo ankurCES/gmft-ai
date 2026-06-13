@@ -66,6 +66,22 @@ export interface ChokepointEnv {
   /** Mirrors `cfg.chokepoint.denylist`. */
   denylist: readonly string[];
   /**
+   * v0.3.B — optional session allowlist. When non-empty, any
+   * `targetRequired` call whose `args.target` is NOT in the list
+   * is denied with a clear reason. The list is checked AFTER the
+   * existing private-network and `denylist` checks, so a host can
+   * be both allowlisted and denylisted (deny wins — see rules.ts).
+   *
+   * Empty/undefined = no allowlist enforced; the chokepoint
+   * behaves exactly as it did pre-v0.3.B (back-compat preserved
+   * for every existing operator).
+   *
+   * Loaded per-invocation from `--scope <path>` on the CLI; not
+   * persisted to config.toml. The CLI flag is the only entry
+   * point in v0.3.B; a future ADR may add a config field.
+   */
+  allowlist: readonly string[];
+  /**
    * The session-level target (from `--target <host>` on the CLI, or
    * set later by the operator). When present, any `targetRequired`
    * call whose `args.target` does not match is denied with a
