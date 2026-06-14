@@ -80,7 +80,7 @@ export function theHarvesterFindings(parsed: Parsed, target: string): Finding[] 
   for (const e of parsed.emails) {
     out.push({
       id: `theharvester-email-${safeEmail(e)}-${now}`,
-      tool: 'theHarvester',
+      tool: 'the_harvester',
       target,
       title: `Email ${e}`,
       description: `Email address discovered via OSINT: ${e}`,
@@ -92,7 +92,7 @@ export function theHarvesterFindings(parsed: Parsed, target: string): Finding[] 
   for (const h of parsed.hosts) {
     out.push({
       id: `theharvester-host-${h.host.replace(/[^a-zA-Z0-9.-]/g, '-')}-${now}`,
-      tool: 'theHarvester',
+      tool: 'the_harvester',
       target,
       title: `Host ${h.host}${h.address ? ` -> ${h.address}` : ''}`,
       description: h.address ? `${h.host} (${h.address})` : h.host,
@@ -104,7 +104,7 @@ export function theHarvesterFindings(parsed: Parsed, target: string): Finding[] 
   for (const u of parsed.urls) {
     out.push({
       id: `theharvester-url-${u.replace(/[^a-zA-Z0-9._:/-]/g, '-')}-${now}`,
-      tool: 'theHarvester',
+      tool: 'the_harvester',
       target,
       title: `URL ${u}`,
       description: `URL discovered via OSINT: ${u}`,
@@ -117,7 +117,7 @@ export function theHarvesterFindings(parsed: Parsed, target: string): Finding[] 
 }
 
 export const theHarvesterTool: Tool<typeof TheHarvesterInput, typeof TheHarvesterOutput> = {
-  name: 'theHarvester',
+  name: 'the_harvester',
   category: 'recon',
   flags: ['targetRequired'],
   description: 'OSINT email/host/URL harvesting with theHarvester. Sources joined with commas; -f - emits results to stdout for parsing.',

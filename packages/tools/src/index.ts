@@ -13,6 +13,15 @@ export * from './shared/capabilities.js';
 export * from './shared/stream.js';
 export * from './shell/shell-exec.js';
 export * from './network/index.js';
+// v0.3.B — surface the web + wifi tool barrels so the v0.3.B tools
+// (nuclei, nikto, gobuster, ffuf, sqlmap, httpx, wpscan, snmpcheck,
+// evil-twin, deauth, wifite-scan, bettercap, aircrack, kismet) can
+// be imported by name. The catalog array already includes them;
+// these re-exports make them available to AgentApp's `/run` wiring
+// and to any future consumer that wants the typed tool constant
+// rather than the catalog projection.
+export * from './web/index.js';
+export * from './wifi/index.js';
 export * from './reports/selections.js';
 export {
   defaultReportPath,
