@@ -1,6 +1,7 @@
 import { Box, Text, useFocus, useInput } from 'ink';
 import { useState } from 'react';
 import type { Theme } from '../theme.js';
+import { completeCommand } from '../../session/tab-completion.js';
 
 export interface InputBoxProps {
   onSubmit: (value: string) => void;
@@ -64,6 +65,21 @@ export function InputBox({
       } else {
         setHistoryIndex(next);
         setValue(history[next] ?? '');
+      }
+      return;
+    }
+
+    if (key.tab) {
+      // v0.3.B — slash-command tab completion. Only fires when the
+      // value starts with '/'. For non-slash input (or when the
+      // command token is already at the LCP of all matches) the
+      // helper returns `value` unchanged and we fall through
+      // (Ink's terminal swallows the literal tab key so it doesn't
+      // get inserted). Bell-on-no-completion is a future ergonomic.
+      const result = completeCommand(value);
+      if (result.value !== null && result.value !== value) {
+        setValue(result.value);
+        if (historyIndex !== null) setHistoryIndex(null);
       }
       return;
     }
