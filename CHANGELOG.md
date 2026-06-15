@@ -80,9 +80,9 @@ operator reference for all 29.
 
 - `pnpm -r build` — clean.
 - `pnpm -r typecheck` — clean.
-- `pnpm -r test` — 811/811 passing
+- `pnpm -r test` — 827/827 passing
   (16 native-shim + 1 testkit + 219 core + 352 tools + 239 gmft;
-  the 4 new gmft cases come from the tab-completion module +
+  the 20 new gmft cases come from the tab-completion module +
   2 new InputBox wiring tests).
 - `gmft run --help` lists all 29 tools.
 
