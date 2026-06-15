@@ -113,3 +113,39 @@ export {
   type RunInnerOpts,
 } from './tools/executor.js';
 export { type InnerRunner, type InnerRunnerResult } from './tools/types.js';
+
+// v0.3.C — audit observability (hash-chained JSONL + CLI).
+// The `audit/` module is self-contained: types + canonical form,
+// HMAC key management, the append-only writer, the path math,
+// the sink interface (with opt-out env var), and the chokepoint
+// decorator. The CLI primitives (`verifyAuditLog`, `readAuditLog`,
+// `tailAuditLog`) live in `apps/gmft/src/cli-audit.ts` because
+// they pull in `node:fs` reads that the core library should not
+// expose — `apps/gmft` is the right layer for the binary.
+export {
+  GENESIS_PREV_HASH,
+  canonicalForm,
+  computeHash,
+  type AuditEvent,
+  type AuditEventKind,
+} from './audit/types.js';
+export {
+  getOrCreateHmacKey,
+  auditKeyMode,
+  backupHmacKey,
+  restoreHmacKey,
+  ensureHmacKey,
+  HMAC_KEY_FILENAME,
+  SECRET_KEY_NAME,
+} from './audit/key.js';
+export {
+  auditDir,
+  auditLogPath,
+  auditKeyPath,
+  AUDIT_DIRNAME,
+  AUDIT_LOG_FILENAME,
+  AUDIT_KEY_FILENAME,
+} from './audit/paths.js';
+export { AuditWriter } from './audit/writer.js';
+export { NOOP_SINK, makeAuditSink, type AuditSink } from './audit/sink.js';
+export { withAuditChokepoint } from './audit/instrument.js';

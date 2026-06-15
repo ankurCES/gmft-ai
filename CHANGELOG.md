@@ -4,6 +4,100 @@ All notable changes to GMFT-AI are documented here.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning: [Semantic](https://semver.org/).
 
+## [0.3.0-C] — 2026-06-19
+
+**v0.3.C slice — tamper-evident audit log + CLI.** Adds a
+hash-chained, HMAC-signed JSONL audit log under
+`$XDG_CONFIG_HOME/gmft/audit/`, the `withAuditChokepoint`
+decorator that records every chokepoint decision, and a new
+`gmft audit {verify,log,tail}` subcommand surface. The TUI
+wiring of `withAuditChokepoint` lands in a follow-up commit;
+this slice ships the library + CLI so the chain contract is
+reviewable in isolation.
+
+### Changes
+
+- **Audit library (`@gmft/core/audit`):**
+  - `AuditEvent`, `AuditEventKind` (7 kinds: `session-start`,
+    `session-end`, `tool-call`, `tool-result`,
+    `chokepoint-decision`, `runner-mode`, `onboard`),
+    `canonicalForm` (recursive key-sort for reproducible
+    hashes), `computeHash` (HMAC-SHA-256 over the canonical
+    form), and `GENESIS_PREV_HASH` (64 zero hex chars).
+  - `AuditWriter.append(kind, payload)` — single-writer,
+    `fsync`-on-append, mode-0600 file. Each event carries
+    `ts`, `kind`, `prevHash`, `hash`, and `payload`. The
+    chain: line N's `prevHash` = line N-1's `hash`; line 1's
+    `prevHash` = `GENESIS_PREV_HASH`.
+  - `getOrCreateHmacKey` — generates a 32-byte key on first
+    run, reads the existing 0600 file on subsequent runs,
+    corrects mode on first append after a chmod tampering.
+  - `backupHmacKey` / `restoreHmacKey` — move the key between
+    file and secret store (under `audit.hmac_key`).
+  - `AuditSink` interface + `NOOP_SINK` + `makeAuditSink` —
+    the indirection that lets tests assert on logged events
+    without touching the file. `GMFT_AUDIT=off` swaps in
+    `NOOP_SINK`.
+  - `withAuditChokepoint(inner, sink)` — wraps a
+    `Chokepoint` and records every decision. The inner
+    chokepoint is unchanged (ADR-0006's promise stays
+    intact: auditing is post-decision, never a co-routine).
+- **Audit CLI (`apps/gmft/src/cli.tsx`):**
+  - `gmft audit verify` — walk the chain, recompute every
+    hash, exit 0 if intact / 1 if broken. Prints the broken
+    line number, recorded vs. computed hash, and the count
+    of events verified before the break.
+  - `gmft audit log` — read with filters: `--limit N`,
+    `--since ISO`, `--until ISO`, `--kind KIND` (repeatable).
+    Most-recent-first, formatted as
+    `<line>\t<ts>\t<kind>\t<JSON-encoded payload>`.
+  - `gmft audit tail` — follow the log in real time
+    (500ms poll), emit each new line, stop on SIGINT.
+  - Dispatch is an early branch in `cli.tsx` — `gmft audit
+    ...` never triggers onboarding or TUI mount.
+- **Audit primitives (`apps/gmft/src/cli-audit.ts`):**
+  - `verifyAuditLog(file, key)` — returns
+    `{ ok, eventCount, lastEvent } | { ok, brokenAt, recorded,
+    computed, eventCount, unverifiedFrom }`.
+  - `readAuditLog(file, filters)` — filtered read.
+  - `tailAuditLog(file, onLine, { pollMs, shouldStop })` —
+    poll-and-emit follow mode.
+- **Core re-exports (`packages/core/src/index.ts`):** 13
+  new symbols re-exported so `apps/gmft` can
+  `import { verifyAuditLog, ... } from '@gmft/core'`. The
+  `audit/` module is otherwise self-contained.
+- **ADR-0013** — the v0.3.C audit-log design (chained JSONL,
+  HMAC key storage, opt-out, the deliberate non-change to
+  `AgentApp.tsx`).
+
+### Test budget
+
++10 tests, all in `apps/gmft/test/`:
+- `audit/types.test.ts` (4) — `canonicalForm` key-sorts
+  recursively, `computeHash` is stable across runs, the
+  canonical form omits `hash` itself, `GENESIS_PREV_HASH` is
+  64 zeros.
+- `audit/key.test.ts` (2) — `getOrCreateHmacKey` creates on
+  first call and reads on second; mode is 0600 after create.
+- `audit/writer.test.ts` (4) — first append uses
+  `GENESIS_PREV_HASH`, second append chains to the first,
+  50 concurrent appends produce a valid chain, file mode is
+  0600 after append.
+- `audit/sink+instrument.test.ts` (2) — sink called with
+  every chokepoint decision; `GMFT_AUDIT=off` swaps to
+  `NOOP_SINK`.
+- `cli-audit.test.ts` (7 — over budget by 2) — verify
+  intact, verify tampered, verify wrong key, read all,
+  filter by kind, apply limit, tail picks up new lines.
+
+### TUI follow-up (out of scope for v0.3.C, intentional)
+
+`AgentApp.tsx` does **not** call `withAuditChokepoint` in
+this slice. A 6-line breadcrumb in the file header (above
+the imports) points at ADR-0013 §7 and the recipe. The
+follow-up wrap is one line: `withAuditChokepoint(
+createChokepoint(readChokepointEnv({...})), sink)`.
+
 ## [0.3.0-B] — 2026-06-19
 
 **v0.3.B slice — recon expansion.** Adds 13 new tools to the

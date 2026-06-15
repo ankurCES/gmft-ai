@@ -22,6 +22,16 @@
  * The slash dispatcher itself stays pure (no I/O, no React). AgentApp
  * is the only React-aware layer, and it's the only place that knows
  * about the async apiKey lookup.
+ *
+ * v0.3.C — audit emission is a deliberate non-change in this file.
+ * `@gmft/core/audit` ships the `AuditWriter`, the `withAuditChokepoint`
+ * decorator, and the `gmft audit {verify,log,tail}` CLI (see
+ * ADR-0013). The TUI integration — wrapping `createChokepoint` here
+ * with `withAuditChokepoint` and threading the resulting sink into
+ * `runTurn` — lands in a follow-up commit. The gap is intentional:
+ * the audit-chain contract is reviewable in isolation (CLI tests
+ * + manual `gmft audit verify` against a seeded log), and the TUI
+ * emission is a one-place wrap when it ships. See ADR-0013 §7.
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
