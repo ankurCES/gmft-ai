@@ -332,4 +332,175 @@ describe('dispatchSlash', () => {
       expect(r.reply!.content).toContain('md|json|pdf');
     });
   });
+
+  // ───── /tools ────────────────────────────────────────────────
+  describe('/tools', () => {
+    it('lists every tool grouped by domain when called with no arg', async () => {
+      const r = await dispatchSlash('/tools', makeCtx());
+      expect(r.kind).toBe('handled');
+      if (r.kind !== 'handled') throw new Error('narrow');
+      // Heading: count of registered tools.
+      expect(r.reply!.content).toMatch(/^\d+ tools? registered:/m);
+      // Domains that should be visible (the picker groups by
+      // ToolCategory from @gmft/core, so all four live categories
+      // must show up).
+      expect(r.reply!.content).toContain('recon (');
+      expect(r.reply!.content).toContain('binary (');
+      expect(r.reply!.content).toContain('file (');
+      expect(r.reply!.content).toContain('shell (');
+      // Spot-check a few well-known tools.
+      expect(r.reply!.content).toContain('nmap');
+      expect(r.reply!.content).toContain('httpx');
+      expect(r.reply!.content).toContain('evil_twin');
+      expect(r.reply!.content).toContain('shell_exec');
+      expect(r.reply!.content).toContain('report_pdf');
+    });
+
+    it('filters to a single domain when given', async () => {
+      const r = await dispatchSlash('/tools binary', makeCtx());
+      if (r.kind !== 'handled') throw new Error('narrow');
+      // Domain-specific heading.
+      expect(r.reply!.content).toMatch(/^\d+ binary tools?:/m);
+      // The 'binary' group is in the output...
+      expect(r.reply!.content).toContain('binary (');
+      // ...but other domains are NOT.
+      expect(r.reply!.content).not.toContain('recon (');
+      expect(r.reply!.content).not.toContain('shell (');
+      // Spot-check a binary-domain tool.
+      expect(r.reply!.content).toContain('httpx');
+    });
+
+    it('accepts `recon` as a filter (the live network category)', async () => {
+      const r = await dispatchSlash('/tools recon', makeCtx());
+      if (r.kind !== 'handled') throw new Error('narrow');
+      expect(r.reply!.content).toMatch(/^\d+ recon tools?:/m);
+      expect(r.reply!.content).toContain('nmap');
+      expect(r.reply!.content).not.toContain('binary (');
+    });
+
+    it('rejects an unknown domain with a usage reply naming the bad value', async () => {
+      const r = await dispatchSlash('/tools banana', makeCtx());
+      if (r.kind !== 'handled') throw new Error('narrow');
+      expect(r.reply!.content).toContain('Usage: /tools');
+      expect(r.reply!.content).toContain('banana');
+    });
+
+    it('treats `/tools` with no arg as a list-all (not a usage error)', async () => {
+      // v0.3.B: a bare `/tools` is the most common form (no arg
+      // means "list everything"). It must NOT trigger the usage
+      // reply that an unknown domain does.
+      const r = await dispatchSlash('/tools', makeCtx());
+      if (r.kind !== 'handled') throw new Error('narrow');
+      expect(r.reply!.content).not.toContain('Usage: /tools');
+    });
+
+    it('help text mentions /tools and the new domains', async () => {
+      const r = await dispatchSlash('/help', makeCtx());
+      if (r.kind !== 'handled') throw new Error('narrow');
+      expect(r.reply!.content).toContain('/tools');
+      // The domains list should be the canonical ToolCategory set.
+      expect(r.reply!.content).toContain('recon');
+      expect(r.reply!.content).toContain('binary');
+      expect(r.reply!.content).toContain('shell');
+    });
+  });
+
+  // ───── /run ─────────────────────────────────────────────────
+  describe('/run', () => {
+    it('returns a "not wired" reply when runTool is absent', async () => {
+      const r = await dispatchSlash('/run nmap 10.0.0.0/24', makeCtx());
+      if (r.kind !== 'handled') throw new Error('narrow');
+      expect(r.reply!.content).toMatch(/not wired|not available/i);
+    });
+
+    it('invokes runTool with the parsed tool name + args and surfaces the tool result', async () => {
+      const toolMsg: Msg = {
+        id: 't-1',
+        role: 'tool',
+        content: 'Nmap scan: 3 hosts up.',
+        ts: 100,
+        toolCallId: 'tc-1',
+      };
+      const runTool = vi
+        .fn()
+        .mockResolvedValue({ msg: toolMsg, denied: false });
+      const r = await dispatchSlash('/run nmap 10.0.0.0/24', makeCtx({ runTool }));
+      if (r.kind !== 'handled') throw new Error('narrow');
+      expect(runTool).toHaveBeenCalledWith('nmap', ['10.0.0.0/24']);
+      // Short text reply AND the structured tool message both come
+      // back so the caller can push both into the chat.
+      expect(r.reply!.content).toContain('Ran nmap');
+      expect(r.toolResult).toEqual(toolMsg);
+    });
+
+    it('preserves quoted args verbatim (single, double, backslash)', async () => {
+      const runTool = vi
+        .fn()
+        .mockResolvedValue({ msg: baseMessages[0]!, denied: false });
+      const r = await dispatchSlash(
+        '/run httpx -title "x y" -u https://example.com',
+        makeCtx({ runTool }),
+      );
+      if (r.kind !== 'handled') throw new Error('narrow');
+      expect(runTool).toHaveBeenCalledWith('httpx', [
+        '-title',
+        'x y',
+        '-u',
+        'https://example.com',
+      ]);
+    });
+
+    it('returns a usage reply for `/run` with no tool name', async () => {
+      const runTool = vi.fn();
+      const r = await dispatchSlash('/run', makeCtx({ runTool }));
+      if (r.kind !== 'handled') throw new Error('narrow');
+      expect(runTool).not.toHaveBeenCalled();
+      expect(r.reply!.content).toContain('Usage: /run');
+    });
+
+    it('returns an "unknown tool" reply for a name not in the catalog', async () => {
+      const runTool = vi.fn();
+      const r = await dispatchSlash('/run banana 1.2.3.4', makeCtx({ runTool }));
+      if (r.kind !== 'handled') throw new Error('narrow');
+      expect(runTool).not.toHaveBeenCalled();
+      expect(r.reply!.content).toContain('Unknown tool');
+      expect(r.reply!.content).toContain('banana');
+      // Reply points the user at /tools.
+      expect(r.reply!.content).toContain('/tools');
+    });
+
+    it('surfaces a chokepoint denial as a short reply + the tool msg', async () => {
+      // runTool returns the denial message AND a denied flag. The
+      // dispatcher surfaces a short "denied by chokepoint" reply so
+      // the transcript has a clean audit marker.
+      const deniedMsg: Msg = {
+        id: 't-2',
+        role: 'tool',
+        content: 'Tool nmap denied: target outside scope.',
+        ts: 200,
+      };
+      const runTool = vi
+        .fn()
+        .mockResolvedValue({ msg: deniedMsg, denied: true });
+      const r = await dispatchSlash('/run nmap 10.0.0.0/24', makeCtx({ runTool }));
+      if (r.kind !== 'handled') throw new Error('narrow');
+      expect(r.reply!.content).toContain('denied by chokepoint');
+      expect(r.reply!.content).toContain('nmap');
+      expect(r.toolResult).toEqual(deniedMsg);
+    });
+
+    it('a runTool that throws surfaces a friendly error reply (does not crash)', async () => {
+      const runTool = vi.fn().mockRejectedValue(new Error('chokepoint down'));
+      const r = await dispatchSlash('/run nmap 10.0.0.0/24', makeCtx({ runTool }));
+      if (r.kind !== 'handled') throw new Error('narrow');
+      expect(r.reply!.content).toContain('Run failed');
+      expect(r.reply!.content).toContain('chokepoint down');
+    });
+
+    it('help text mentions /run', async () => {
+      const r = await dispatchSlash('/help', makeCtx());
+      if (r.kind !== 'handled') throw new Error('narrow');
+      expect(r.reply!.content).toContain('/run');
+    });
+  });
 });

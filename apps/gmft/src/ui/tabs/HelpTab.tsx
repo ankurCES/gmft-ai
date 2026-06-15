@@ -17,6 +17,8 @@ const SECTIONS: { title: string; lines: string[] }[] = [
       '/help            — show this help in chat',
       '/clear           — clear chat transcript',
       '/model           — show model (phase 2)',
+      '/tools [domain]  — list available tools (recon|binary|file|shell|http|search|note)',
+      '/run <tool> …    — invoke a tool directly (chokepoint applies)',
     ],
   },
   {

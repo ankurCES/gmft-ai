@@ -28,6 +28,8 @@ import { createOnboardRuntime } from './onboard/runtime.js';
 import { bindProviderUI } from './onboard/bind-provider-ui.js';
 import { SessionStore } from './session/store.js';
 import { parseSandboxFlag } from './sandbox-flag.js';
+import { writePostExitReport, parseReportFormat } from './report-flag.js';
+import { loadScopeFile, ScopeFileError } from './scope-file.js';
 
 const cli = meow(
   `
@@ -52,6 +54,19 @@ const cli = meow(
                         Default: same as the primary agent model. Useful with
                         cheaper/local models (e.g. claude-haiku-4-5, ollama)
                         since the postmortem is a fixed-prompt 4-section task.
+    --report <path>     After the TUI exits, write a report of the current session's
+                        findings to <path>. Path must resolve inside the reports
+                        dir (default $XDG_DATA_HOME/gmft/reports, or
+                        $HOME/.local/share/gmft/reports when XDG is unset);
+                        ".." segments are rejected. Format is chosen by
+                        --report-format (default json).
+    --report-format <f>  json | pdf (default json). Only meaningful with --report.
+    --scope <path>      Load a scope file (JSON: { "allow": ["host1", "host2"] })
+                        and apply it to the chokepoint for this invocation.
+                        The chokepoint denies any 'targetRequired' tool call
+                        whose 'args.target' is not in the allow list. Per-
+                        invocation only — not persisted to config.toml.
+                        Bad path / bad shape / illegal entry → exit 1.
     --help              Show this help
     --version           Show version
 
@@ -62,6 +77,9 @@ const cli = meow(
     $ gmft --sandbox docker
     $ gmft --resume 20260611-094512-abcdef
     $ gmft --supervisor-model claude-haiku-4-5
+    $ gmft --report ./scan-2026-06-17.json
+    $ gmft --report ./scan.pdf --report-format pdf
+    $ gmft --scope ./prod-scope.json --target scanme.nmap.org
 `,
   {
     importMeta: import.meta,
@@ -72,11 +90,28 @@ const cli = meow(
       resume: { type: 'string' },
       sandbox: { type: 'string', default: 'auto' },
       supervisorModel: { type: 'string' },
+      report: { type: 'string' },
+      reportFormat: { type: 'string', default: 'json' },
+      scope: { type: 'string' },
     },
   },
 );
 
 const themeName = (cli.flags.theme ?? 'auto') as 'auto' | 'dark' | 'light' | 'high-contrast';
+
+// v0.3.B — validate --report-format early. The post-exit handler
+// only accepts `json` or `pdf`; reject anything else before the TUI
+// mounts so the user gets a fast, clear error.
+if (cli.flags.report) {
+  try {
+    parseReportFormat(cli.flags.reportFormat);
+  } catch (err) {
+    console.error(
+      err instanceof Error ? err.message : String(err),
+    );
+    process.exit(2);
+  }
+}
 
 // Register the LLM-provider field with the real Ink UI. Other phases
 // (e.g. Phase 2 tools registry) add their own `registerConfigField(...)`
@@ -157,6 +192,36 @@ try {
 } catch (err) {
   console.error(err instanceof Error ? err.message : String(err));
   process.exit(1);
+}
+
+// v0.3.B — load the --scope file (if any) and resolve it to a
+// frozen allowlist. Bad path / bad shape / illegal entry all exit 1
+// with a clear message — same policy as --sandbox. Per-invocation
+// only: the allowlist lives in the chokepoint env, not in
+// config.toml. A future ADR may add a persisted `chokepoint.allowlist`
+// field; today the CLI is the only entry point.
+let scopeAllowlist: readonly string[] = [];
+if (cli.flags.scope) {
+  try {
+    const loaded = loadScopeFile(cli.flags.scope);
+    scopeAllowlist = loaded.allow;
+    // Surface the load to stderr so a user running with a fresh
+    // TTY can see "scope loaded: N entries" before the TUI mounts.
+    // Keep the wording parseable: it shows up in transcripts.
+    console.error(
+      `--scope: loaded ${loaded.allow.length} entr${loaded.allow.length === 1 ? 'y' : 'ies'} from ${loaded.source}`,
+    );
+  } catch (err) {
+    if (err instanceof ScopeFileError) {
+      console.error(`--scope: ${err.code}: ${err.message}`);
+    } else {
+      console.error(
+        '--scope: failed to load:',
+        err instanceof Error ? err.message : String(err),
+      );
+    }
+    process.exit(1);
+  }
 }
 
 const initialStatus = {
@@ -281,6 +346,11 @@ const { waitUntilExit } = render(
     ...(cli.flags.supervisorModel
       ? { supervisorModelId: cli.flags.supervisorModel }
       : {}),
+    // v0.3.B — per-invocation allowlist from --scope <path>.
+    // Empty array is the no-op default; AgentApp itself filters
+    // out the empty case before calling readChokepointEnv so the
+    // back-compat path is byte-for-byte identical to pre-v0.3.B.
+    ...(scopeAllowlist.length > 0 ? { allowlist: scopeAllowlist } : {}),
     onTurnComplete: ({ user, assistant }) => {
       // Persist both halves of the turn. The store is async but the
       // TUI's onTurnComplete is fire-and-forget here — we log on
@@ -299,3 +369,54 @@ const { waitUntilExit } = render(
 );
 
 await waitUntilExit();
+
+// v0.3.B — post-exit report dump. When the user passes --report <path>,
+// the CLI drains the current session's findings and writes either a
+// JSON or PDF report to <path>. The path is resolved through the same
+// reports-dir policy as the in-session report_write / report_pdf
+// tools (rejects ".." segments and any escape from the reports root).
+//
+// We do NOT route this through the chokepoint's dispatcher: the user
+// explicitly opted in at the CLI level, the chokepoint governs
+// LLM-driven tool calls, and a TUI exit + write is a single, atomic
+// post-action that the user is implicitly approving by passing the
+// flag. If anything goes wrong we log a warning and exit non-zero so
+// CI/automation can detect it; the TUI's exit code is preserved on
+// the happy path.
+if (cli.flags.report) {
+  const requested = cli.flags.report;
+  let format: 'json' | 'pdf';
+  try {
+    format = parseReportFormat(cli.flags.reportFormat);
+  } catch (err) {
+    console.error(
+      err instanceof Error ? err.message : String(err),
+    );
+    process.exit(2);
+  }
+
+  try {
+    const currentId = await session.currentId();
+    if (!currentId) {
+      console.error(
+        '--report: no current session id on the pointer. ' +
+        'Run a session first (or pass --resume <id>).',
+      );
+      process.exit(3);
+    }
+    const result = await writePostExitReport({
+      sessionId: currentId,
+      baseDir: session.directory,
+      outputPath: requested,
+      format,
+    });
+    // Final line on stdout — keep it parseable: "report <format> <path>".
+    process.stdout.write(`report ${result.format} ${result.path}\n`);
+  } catch (err) {
+    console.error(
+      '--report: failed to write report:',
+      err instanceof Error ? err.message : String(err),
+    );
+    process.exit(4);
+  }
+}

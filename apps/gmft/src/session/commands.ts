@@ -27,6 +27,8 @@
 
 import type { Message as Msg } from '../ui/components/Message.js';
 import type { SessionInfo, SessionStore } from './store.js';
+import { formatToolList, findTool } from './tool-picker.js';
+import { parseRunCommand } from './run-command.js';
 
 export type ReportFormat = 'md' | 'json' | 'pdf';
 
@@ -69,6 +71,15 @@ export type SlashResult =
        * the rail; the change does NOT touch disk.
        */
       setModel?: { provider: string; model: string };
+      /**
+       * v0.3.B — optional rich tool-result message. Used by
+       * `/run <tool> [args...]` so the chat can render the actual
+       * tool output (not just a text summary). When set, the caller
+       * pushes this Msg in addition to (or instead of) the `reply`.
+       * Distinct from `reply` because tool output is `role: 'tool'`
+       * with structured content (findings, stdout excerpts, etc.).
+       */
+      toolResult?: Msg;
     }
   | { kind: 'exited' }; // /exit was typed
 
@@ -106,6 +117,21 @@ export interface SlashContext {
    * manually. Best-effort: errors are surfaced as a reply.
    */
   openFile?: (path: string) => Promise<void>;
+  /**
+   * v0.3.B — invoke a tool directly. Wired in by `AgentApp` so the
+   * `/run <tool> [args...]` slash command can execute a tool with
+   * the same chokepoint + audit pipeline the agent loop uses.
+   *
+   * The function takes a tool name and an arg list and returns a
+   * `Msg` (the same shape the agent loop pushes into the chat
+   * after a `tool-result` event) plus a `denied` flag for the
+   * chokepoint-denied case. If absent, `/run` returns a friendly
+   * "tool runner unavailable" reply.
+   */
+  runTool?: (
+    tool: string,
+    args: readonly string[],
+  ) => Promise<{ msg: Msg; denied: boolean }>;
 }
 
 export const HELP_TEXT =
@@ -121,6 +147,8 @@ export const HELP_TEXT =
   '  /resume                     alias for /session load <current>\n' +
   '  /report [md|json|pdf] [path]\n' +
   '                             write a report (default: md). pdf also opens it.\n' +
+  '  /tools [domain]             list available tools (shell|http|file|search|recon|binary|note)\n' +
+  '  /run <tool> [args...]       invoke a tool directly (chokepoint applies)\n' +
   '  /exit                       exit (alias for Ctrl-C)';
 
 /**
@@ -232,6 +260,14 @@ export async function dispatchSlash(
 
   if (cmd === '/report') {
     return await handleReport(arg, rest, ctx, reply);
+  }
+
+  if (cmd === '/tools') {
+    return await handleTools(arg, ctx, reply);
+  }
+
+  if (cmd === '/run') {
+    return await handleRun(text, ctx, reply);
   }
 
   // Unknown command — never forward.
@@ -402,4 +438,137 @@ async function handleReport(
       reply: reply(`Report failed: ${(e as Error).message}`, 'report-error'),
     };
   }
+}
+
+/**
+ * `/tools [domain]` — list the registered tools, optionally
+ * filtered to a single domain (network, web, wifi, reports,
+ * shell). Pure formatting via `formatToolList`; the result is
+ * pushed into the chat as a system message so it shows up
+ * inline in the transcript.
+ */
+async function handleTools(
+  domainArg: string | undefined,
+  ctx: SlashContext,
+  reply: (content: string, idSuffix: string) => Msg,
+): Promise<SlashResult> {
+  const filter = domainArg?.toLowerCase().trim();
+  // Validate the filter — accepted values match the catalog's
+  // `ToolCategory` strings (the same set the picker uses as its
+  // group order). Unknown domain -> usage reply (matches the
+  // /session /report pattern). `undefined` (no arg) is the
+  // "list all" path — different from an unknown domain, so it
+  // must not trip the usage reply.
+  const knownDomains = new Set<string>([
+    'shell',
+    'http',
+    'file',
+    'search',
+    'recon',
+    'binary',
+    'note',
+  ]);
+  if (filter !== undefined && filter !== '' && !knownDomains.has(filter)) {
+    return {
+      kind: 'handled',
+      reply: reply(
+        `Usage: /tools [shell|http|file|search|recon|binary|note]  (got: "${filter || 'nothing'}")`,
+        'tools-usage',
+      ),
+    };
+  }
+  // `filter` is either `undefined` (no arg) or a known domain.
+  // `formatToolList(undefined)` lists everything; `formatToolList(filter)`
+  // filters to that single group.
+  const result = formatToolList(filter === '' ? undefined : filter);
+  return {
+    kind: 'handled',
+    reply: reply(
+      result.text,
+      filter === undefined || filter === '' ? 'tools' : `tools-${filter}`,
+    ),
+  };
+}
+
+/**
+ * `/run <tool> [args...]` — invoke a tool directly. The dispatch
+ * path:
+ *   1. `parseRunCommand` validates the tool name + tokenizes the
+ *      args (quoted spans preserved).
+ *   2. If `ctx.runTool` is absent, return a friendly "tool
+ *      runner unavailable" reply (mirrors `/report`).
+ *   3. Otherwise hand off to `ctx.runTool(tool, args)`. The
+ *      AgentApp implementation goes through the chokepoint +
+ *      audit pipeline, so `--scope` and the destructive banner
+ *      from T18 still apply.
+ *
+ * The result is a `toolResult` `Msg` (role: 'tool') with the
+ * tool's output. The chokepoint-denied case is surfaced as a
+ * reply so the operator sees a clear "denied: <reason>" line
+ * without polluting the tool-result stream.
+ */
+async function handleRun(
+  text: string,
+  ctx: SlashContext,
+  reply: (content: string, idSuffix: string) => Msg,
+): Promise<SlashResult> {
+  const parsed = parseRunCommand(text, (n) => Boolean(findTool(n)));
+  if (!parsed.ok) {
+    if (parsed.code === 'missing-tool') {
+      return {
+        kind: 'handled',
+        reply: reply('Usage: /run <tool> [args...]', 'run-usage'),
+      };
+    }
+    // unknown-tool
+    return {
+      kind: 'handled',
+      reply: reply(
+        `Unknown tool: ${parsed.tool}\nType /tools to see the list.`,
+        'run-unknown',
+      ),
+    };
+  }
+  if (!ctx.runTool) {
+    return {
+      kind: 'handled',
+      reply: reply(
+        'Tool runner is not wired into this build of gmft.',
+        'run-noop',
+      ),
+    };
+  }
+  let msg: Msg;
+  let denied: boolean;
+  try {
+    const out = await ctx.runTool(parsed.tool, parsed.args);
+    msg = out.msg;
+    denied = out.denied;
+  } catch (e) {
+    return {
+      kind: 'handled',
+      reply: reply(
+        `Run failed: ${(e as Error).message}`,
+        'run-error',
+      ),
+    };
+  }
+  if (denied) {
+    // Chokepoint denied — the result message already carries the
+    // reason. Surface a short reply so the transcript has a clean
+    // audit marker; the tool message is also pushed.
+    return {
+      kind: 'handled',
+      reply: reply(
+        `Tool ${parsed.tool} denied by chokepoint.`,
+        'run-denied',
+      ),
+      toolResult: msg,
+    };
+  }
+  return {
+    kind: 'handled',
+    reply: reply(`Ran ${parsed.tool}.`, 'run'),
+    toolResult: msg,
+  };
 }

@@ -35,7 +35,7 @@ describe('theHarvesterTool', () => {
   });
 
   it('has the right metadata', () => {
-    expect(theHarvesterTool.name).toBe('theHarvester');
+    expect(theHarvesterTool.name).toBe('the_harvester');
     expect(theHarvesterTool.category).toBe('recon');
     expect(theHarvesterTool.flags).toContain('targetRequired');
   });
@@ -55,7 +55,7 @@ describe('theHarvesterTool', () => {
     // 3 emails + 2 hosts + 1 URL = 6 findings
     expect(out.findings).toHaveLength(6);
     for (const f of out.findings) {
-      expect(f.tool).toBe('theHarvester');
+      expect(f.tool).toBe('the_harvester');
       expect(f.target).toBe('example.com');
     }
     expect(out.findings.some((f) => f.title.startsWith('Email '))).toBe(true);

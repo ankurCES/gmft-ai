@@ -254,8 +254,12 @@ function renderHtml(title: string, findings: Finding[]): string {
  *
  * `includeEvidence=false` strips the `evidence` field — useful for
  * dashboards that only need headline data (id + severity + title).
+ *
+ * Exported so the CLI's `--report json` flag (which runs after the
+ * TUI exits) can dump the same JSON the `report_write` tool would
+ * have produced, without going through the chokepoint's dispatcher.
  */
-function renderJson(
+export function buildJsonReport(
   sessionId: string,
   findings: Finding[],
   includeEvidence: boolean,
@@ -316,7 +320,7 @@ export const reportWriteTool: Tool<typeof ReportWriteInput, typeof ReportWriteOu
       ? renderMarkdown(title, final)
       : parsed.format === 'html'
         ? renderHtml(title, final)
-        : renderJson(parsed.sessionId, final, parsed.includeEvidence);
+        : buildJsonReport(parsed.sessionId, final, parsed.includeEvidence);
 
     // 6. Write
     mkdirSync(dirname(target), { recursive: true });

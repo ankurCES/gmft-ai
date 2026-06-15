@@ -89,4 +89,34 @@ describe('InputBox', () => {
     expect(onSubmit).not.toHaveBeenCalled();
     expect(lastFrame() ?? '').toContain('running…');
   });
+
+  it('completes a slash command when Tab is pressed (unique match)', async () => {
+    const onSubmit = vi.fn();
+    const { stdin, lastFrame } = await renderInputBox({ onSubmit, history: [] });
+    // Type "/he" then Tab. Tab sends the literal 0x09 byte, which
+    // Ink v5 surfaces as `key.tab === true`. The completion helper
+    // should extend '/he' to '/help ' (unique match).
+    stdin.write('/he');
+    await tick();
+    stdin.write('\t');
+    await tick();
+    expect(lastFrame() ?? '').toContain('/help ');
+    // Sanity: the input was not submitted (Tab must not trigger
+    // onSubmit, only Enter does).
+    expect(onSubmit).not.toHaveBeenCalled();
+  });
+
+  it('Tab on non-slash input is a no-op (no value change)', async () => {
+    const onSubmit = vi.fn();
+    const { stdin, lastFrame } = await renderInputBox({ onSubmit, history: [] });
+    stdin.write('hello');
+    await tick();
+    stdin.write('\t');
+    await tick();
+    // Non-slash input — Tab should be swallowed (Ink's terminal
+    // also doesn't insert the literal tab character into the
+    // value stream). The value should remain 'hello'.
+    expect(lastFrame() ?? '').toContain('hello');
+    expect(lastFrame() ?? '').not.toContain('hello\t');
+  });
 });

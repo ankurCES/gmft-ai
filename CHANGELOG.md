@@ -4,6 +4,114 @@ All notable changes to GMFT-AI are documented here.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning: [Semantic](https://semver.org/).
 
+## [0.3.0-B] — 2026-06-19
+
+**v0.3.B slice — recon expansion.** Adds 13 new tools to the
+catalog (7 network + 3 web + 3 wifi), bumping the shared
+`gmft/network` and `gmft/web` Docker images from `:0.1` to
+`:0.3` to bundle the new binaries, and adding `--scope <file>`
+for per-line target fan-out across any `targetRequired` tool.
+Catalog grows from 16 → 29 tools; tool-catalog doc is the
+operator reference for all 29.
+
+### Changes
+
+- **Network tools (7, image `gmft/network:0.3`):**
+  - `masscan` — internet-scale port scanner, use when nmap is
+    too slow for the range.
+  - `rustscan` — fast Rust port scanner that hands off to nmap
+    for service detection.
+  - `subfinder` — passive subdomain enumeration (CT logs +
+    ~30 passive sources).
+  - `dnsrecon` — active DNS record enumeration (SOA/NS/MX/TXT/
+    SRV/PTR + zone-transfer attempt).
+  - `fierce` — DNS zone-walk + adjacent-network scanner.
+  - `enum4linux` — SMB/Samba enumeration (users, shares, groups).
+  - `ldapsearch` — LDAP directory query with anonymous bind
+    fallback.
+- **Web tools (3, image `gmft/web:0.3`):**
+  - `httpx` — HTTP(S) liveness probe; the standard follow-up
+    to `subfinder` output.
+  - `wpscan` — WordPress core/plugin/theme/CVE scanner.
+  - `snmpcheck` — SNMP enumeration (default community `public`
+    is the misconfiguration detector).
+- **Wifi tools (3, host-only, not in any Docker image — same
+  model as the v0.1 wifi tools):**
+  - `bettercap` — passive AP + BLE discovery. **Recon, not
+    attack** (no transmit) — for deauth / evil-twin see the
+    v0.1 wifi tools.
+  - `aircrack` — passive WiFi capture via `airodump-ng`; does
+    not crack (operator runs `aircrack-ng` / `hashcat` offline
+    with their own wordlists).
+  - `kismet` — parses a Kismet `.kismet` log for post-hoc device
+    discovery across WiFi / BLE / Zigbee.
+- **Dockerfiles:** `docker/Dockerfile.network` and
+  `docker/Dockerfile.web` bumped to the `:0.3` tag with the
+  new binaries installed (masscan, rustscan, subfinder,
+  dnsrecon, fierce, enum4linux, ldapsearch / httpx, wpscan,
+  snmpcheck). Each new binary has a forward-looking `which`
+  check in the build.
+- **Catalog:** all 13 new tools registered in
+  `packages/tools/src/catalog.ts` with the correct `category`
+  (`recon` for the 7 network tools, `binary` for the 3 web
+  and 3 wifi tools) and `flags` (`targetRequired` for all
+  except httpx/wpscan/snmpcheck which are intentionally
+  unflagged — they're the right tool to probe a host the LLM
+  learned about, not just the session target).
+- **`--scope <file>`** (chokepoint, command line): new flag
+  that reads a newline-delimited list of targets and fans the
+  call out across all of them. Each target gets its own
+  chokepoint confirmation + audit row. The 13 new tools
+  inherit the scope-mode behavior from the existing
+  `targetsFromFile: true` opt-in on the older recon tools
+  (nmap, dnsenum, etc.).
+- **Destructive warning surface:** chokepoint emits a yellow
+  warning for any tool flagged `destructive` *or* any tool
+  whose target is non-canonical (e.g. an IP outside the
+  session target's denylist range). Visible in the StatusRail
+  during the confirmation prompt and in the audit log.
+- **Tool catalog doc:** `docs/tool-catalog.md` updated to
+  document all 29 tools, the Quick reference table, and a
+  rewritten "What's not in v0.3.B" section that lists
+  active-directory attack tooling, WPA handshake cracking,
+  and managed long-lived daemons as out-of-scope.
+
+### Verification
+
+- `pnpm -r build` — clean.
+- `pnpm -r typecheck` — clean.
+- `pnpm -r test` — 827/827 passing
+  (16 native-shim + 1 testkit + 219 core + 352 tools + 239 gmft;
+  the 20 new gmft cases come from the tab-completion module +
+  2 new InputBox wiring tests).
+- `gmft run --help` lists all 29 tools.
+
+### Migration notes
+
+- `--scope <file>` is additive. Existing invocations that pass
+  `--target <ip>` continue to work. Tools that opt into
+  scope-mode read targets from the file one-per-line and emit
+  one chokepoint confirmation + one audit row per target.
+- `docker/Dockerfile.network` and `.web` bumped `:0.1` → `:0.3`.
+  The `runner` cache key includes the image tag, so a stale
+  `:0.1` image will be replaced automatically the next time a
+  tool runs; no manual `docker image rm` required.
+- The 3 new wifi tools are host-only (require `bettercap`,
+  `airodump-ng`, or a kismet log on the host's PATH). They
+  are not in any gmft Docker image by design — wireless NIC
+  monitor mode and capture permissions are host-side concerns.
+
+### Known issues
+
+- `stream.test.ts > spawnStreaming > fires onStdout multiple
+  times for chunked output` remains a flaky test (~1% failure
+  on slow CI). Carryover from `[0.3.0-A]`. Track in
+  `docs/superpowers/plans/2026-06-17-gmft-v0.3-run-polish-and-tool-surface.md`
+  §Risks.
+- `enum4linux` and `wpscan` are loud — WAF / SMB null-session
+  alarms are expected. Operators should only run them against
+  in-scope targets and expect blue-team noise.
+
 ## [0.3.0-A] — 2026-06-17
 
 **v0.3.A slice — run-polish.** Ships the first stable `run-polish`

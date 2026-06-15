@@ -36,12 +36,19 @@ export function readChokepointEnv(opts: {
   sessionTarget?: string;
   /** v0.2.D: live capability snapshot from `@gmft/tools`. Defaults to "host". */
   runnerCapabilities?: RunnerCapabilitiesShape;
+  /**
+   * v0.3.B — optional per-invocation allowlist. Loaded by the CLI
+   * from `--scope <path>` and passed through. Empty/undefined =
+   * the existing denylist-only behavior (back-compat).
+   */
+  allowlist?: readonly string[];
 }): ChokepointEnv {
   const env = opts.env ?? process.env;
   return {
     allowPrivateNetworks: opts.cfg.chokepoint.allowPrivateNetworks,
     allowElevation: env.GMFT_ALLOW_ELEVATION === 'true',
     denylist: opts.cfg.chokepoint.denylist,
+    allowlist: opts.allowlist ?? [],
     sessionTarget: opts.sessionTarget,
     runnerCapabilities: opts.runnerCapabilities ?? DEFAULT_CAPS,
     allowUnsandboxedDestructive: env.GMFT_ALLOW_UNSANDBOXED_DESTRUCTIVE === 'true',

@@ -197,5 +197,68 @@ describe('ApprovalPrompt', () => {
       await tick();
       expect(onResolve).toHaveBeenCalledWith(true);
     });
+
+    // v0.3.B — destructive warning surface. When the chokepoint
+    // returns a `type-then-confirm` decision, the prompt renders
+    // a red `DESTRUCTIVE` label in the header so the user can
+    // see — at a glance, even while scrolling past prior prompts
+    // — that this one is high-friction. Plain `confirm` prompts
+    // (no `prompt` prop) keep the original yellow treatment.
+    it('renders a DESTRUCTIVE label in the header when prompt is set', async () => {
+      const { lastFrame } = await renderPrompt({
+        id: 'tc-11',
+        name: 'evil_twin',
+        args: { ssid: 'corp-wifi' },
+        reason: 'high-friction',
+        prompt: 'attack',
+        onResolve: () => {},
+      });
+      const frame = lastFrame() ?? '';
+      expect(frame).toContain('DESTRUCTIVE');
+      // The original chokepoint type-to-confirm label is preserved
+      // (the audit log still wants to see it; the DESTRUCTIVE label
+      // is additive).
+      expect(frame).toContain('chokepoint type-to-confirm');
+    });
+
+    it('does NOT render a DESTRUCTIVE label in plain confirm mode (no prompt prop)', async () => {
+      // Sanity-check the back-compat path: a plain `confirm` (no
+      // `prompt` prop) should keep the original yellow treatment
+      // with no DESTRUCTIVE label. This pins the "destructive banner
+      // is *only* for type-to-confirm" contract.
+      const { lastFrame } = await renderPrompt({
+        id: 'tc-12',
+        name: 'shell_exec',
+        args: { argv: ['nmap', '-sS', 'scanme.nmap.org'] },
+        reason: 'destructive; confirm to proceed',
+        onResolve: () => {},
+      });
+      const frame = lastFrame() ?? '';
+      expect(frame).toContain('chokepoint confirm');
+      expect(frame).not.toContain('DESTRUCTIVE');
+      expect(frame).not.toContain('chokepoint type-to-confirm');
+    });
+
+    it('echoes the literal prompt verbatim in the type-to-confirm hint', async () => {
+      // The "type X then press [Enter]" instructions should show
+      // the literal `prompt` string, not a placeholder. Existing
+      // test tc-6 already asserts the prompt is rendered; this one
+      // pins the *exact* wording "type  attack  then press [Enter]"
+      // so a future refactor that loses the literal "attack"
+      // surfaces here.
+      const { lastFrame } = await renderPrompt({
+        id: 'tc-13',
+        name: 'bettercap',
+        args: { eval: 'wifi.recon on' },
+        reason: 'high-friction',
+        prompt: 'attack',
+        onResolve: () => {},
+      });
+      const frame = lastFrame() ?? '';
+      expect(frame).toContain('type');
+      expect(frame).toContain('attack');
+      expect(frame).toContain('then press');
+      expect(frame).toContain('[Enter]');
+    });
   });
 });

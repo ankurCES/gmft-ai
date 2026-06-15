@@ -60,6 +60,8 @@ function isPrivateHost(target: string): boolean {
  *   - format `^[a-zA-Z0-9._-]+$`
  *   - not in a private network range (unless env.allowPrivateNetworks)
  *   - not in the operator-configured `denylist`
+ *   - in the per-invocation `allowlist` (only checked when non-empty;
+ *     empty/undefined is a no-op for back-compat with pre-v0.3.B operators)
  *   - equal to the session-level `env.sessionTarget` (when set) —
  *     this binds the whole session to one host. `--target <host>`
  *     sets it; subsequent tool calls must match.
@@ -84,6 +86,21 @@ export function checkTarget(call: ChokepointCall, env: ChokepointEnv): Decision 
   }
   if (env.denylist.includes(target)) {
     return { kind: 'deny', reason: `target "${target}" is on the chokepoint denylist` };
+  }
+  // v0.3.B — per-invocation allowlist (loaded from --scope <path>).
+  // Empty allowlist = no-op (back-compat). The check is exact-match:
+  // --scope entries are hostnames/CIDRs but the in-memory allowlist
+  // holds the literal string the operator typed, so this matches the
+  // args.target verbatim. CIDR expansion is a future v0.4 item; in
+  // v0.3.B the operator lists each host explicitly (or uses --target
+  // for single-host sessions).
+  if (env.allowlist.length > 0 && !env.allowlist.includes(target)) {
+    return {
+      kind: 'deny',
+      reason:
+        `target "${target}" is not in the session allowlist ` +
+        `(loaded from --scope; ${env.allowlist.length} entr${env.allowlist.length === 1 ? 'y' : 'ies'} listed)`,
+    };
   }
   if (env.sessionTarget && env.sessionTarget !== target) {
     return {

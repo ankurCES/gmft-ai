@@ -32,23 +32,50 @@ import {
   getDefaultModel,
   readChokepointEnv,
   loadConfig,
+  runInner,
   runTurn,
+  ToolRegistry,
   withSupervisor,
   type AgentEvent,
   type ChatMessage,
   type CreateModelOpts,
+  type ExecuteResult,
   type Finding,
   type LlmConfig,
   type PromptEnv,
   type Severity,
   type SupervisorFire,
+  type Tool,
+  type ToolContext,
 } from '@gmft/core';
+import { z } from 'zod';
 import {
   shellExecTool,
   nmapTool,
   dnsenumTool,
   theHarvesterTool,
   whatwebTool,
+  masscanTool,
+  rustscanTool,
+  subfinderTool,
+  dnsreconTool,
+  fierceTool,
+  enum4linuxTool,
+  ldapsearchTool,
+  nucleiTool,
+  niktoTool,
+  gobusterTool,
+  ffufTool,
+  sqlmapTool,
+  httpxTool,
+  wpscanTool,
+  snmpcheckTool,
+  evilTwinTool,
+  wifiDeauthTool,
+  wifiteScanTool,
+  bettercapTool,
+  aircrackTool,
+  kismetTool,
   reportWriteTool,
   reportPdfTool,
   runnerCapabilities,
@@ -84,6 +111,61 @@ const DEFAULT_TOOLS = [
   theHarvesterTool,
   whatwebTool,
 ] as const;
+
+/**
+ * v0.3.B — full 27-tool registry used by `/run <tool> [args...]`.
+ *
+ * The agent loop's `DEFAULT_TOOLS` is a 5-tool subset because the
+ * LLM gets a tighter, more focused set. The slash command is a
+ * human-invoked path: the operator typed the tool name, so we
+ * honor the full catalog. Destructive + type-to-confirm tools are
+ * still gated by the chokepoint (with no `onConfirmation` wired,
+ * they're denied with a clear reason — see `runToolForSession`).
+ */
+function buildCatalogRegistry(): ToolRegistry {
+  const r = new ToolRegistry();
+  // The registry's `register` is generic on the input/output Zod
+  // shape. A homogeneous array literal (e.g. `[shellExecTool,
+  // nmapTool]`) gets TS to infer `Tool<ShellExecInput, ShellExecOutput>`
+  // from the first element, then complains about the rest. Casting
+  // the whole array to `Tool<z.ZodTypeAny, z.ZodTypeAny>[]` widens
+  // the element type so each call infers independently — and that
+  // matches the registry's internal storage shape exactly.
+  const all: Tool<z.ZodTypeAny, z.ZodTypeAny>[] = [
+    shellExecTool,
+    nmapTool,
+    dnsenumTool,
+    theHarvesterTool,
+    whatwebTool,
+    masscanTool,
+    rustscanTool,
+    subfinderTool,
+    dnsreconTool,
+    fierceTool,
+    enum4linuxTool,
+    ldapsearchTool,
+    nucleiTool,
+    niktoTool,
+    gobusterTool,
+    ffufTool,
+    sqlmapTool,
+    httpxTool,
+    wpscanTool,
+    snmpcheckTool,
+    evilTwinTool,
+    wifiDeauthTool,
+    wifiteScanTool,
+    bettercapTool,
+    aircrackTool,
+    kismetTool,
+    reportWriteTool,
+    reportPdfTool,
+  ] as unknown as Tool<z.ZodTypeAny, z.ZodTypeAny>[];
+  for (const t of all) {
+    r.register(t);
+  }
+  return r;
+}
 
 /**
  * Async API-key resolver. Returns `undefined` when the key is unset
@@ -149,6 +231,15 @@ export interface AgentAppProps
    * to unmount; tests assert the call via this spy.
    */
   onExit?: () => void;
+  /**
+   * v0.3.B — per-invocation allowlist loaded from `--scope <path>`.
+   * When non-empty, the chokepoint denies any `targetRequired` tool
+   * call whose `args.target` is not in the list. Loaded by `cli.tsx`
+   * at boot; AgentApp just threads it through to `readChokepointEnv`.
+   * Undefined / empty = no allowlist (back-compat with pre-v0.3.B
+   * operators).
+   */
+  allowlist?: readonly string[];
 }
 
 export function AgentApp({
@@ -161,6 +252,7 @@ export function AgentApp({
   onTurnComplete,
   onExit,
   supervisorModelId,
+  allowlist,
   ...appProps
 }: AgentAppProps): React.JSX.Element {
   const system = useMemo(() => buildSystemPrompt('agent', env), [env]);
@@ -441,6 +533,26 @@ export function AgentApp({
           onExit: handleExit,
           runReport: (opts: RunReportOpts) => runReportForSession(session, opts),
           openFile: openFileInOS,
+          // v0.3.B — direct tool invocation via `/run <tool> [args...]`.
+          // Builds the chokepoint lazily so the slash command works
+          // even if the user runs `/run` before submitting any LLM
+          // turn (otherwise chokepointRef.current is null until the
+          // first LLM-driven submit).
+          runTool: (tool: string, args: readonly string[]) =>
+            runToolForSession(tool, args, {
+              getChokepoint: () => {
+                if (chokepointRef.current === null) {
+                  chokepointRef.current = createChokepoint(
+                    readChokepointEnv({
+                      cfg: loadConfig(),
+                      ...(sessionTarget ? { sessionTarget } : {}),
+                      ...(allowlist && allowlist.length > 0 ? { allowlist } : {}),
+                    }),
+                  );
+                }
+                return chokepointRef.current;
+              },
+            }),
         };
         const result = await dispatchSlash(value, ctx);
         if (result.kind === 'sent') {
@@ -454,6 +566,12 @@ export function AgentApp({
             setMessages([]);
           } else if (result.replaceMessages) {
             setMessages(result.replaceMessages);
+          } else if (result.toolResult) {
+            // v0.3.B — `/run` returns a rich `role: 'tool'` message
+            // alongside the human-readable reply. Push it as a
+            // separate transcript entry so the chat can render
+            // findings / stdout excerpts with the tool color.
+            setMessages((prev) => [...prev, result.toolResult!]);
           }
           return result.reply ?? null;
         }
@@ -468,7 +586,14 @@ export function AgentApp({
       // The cached ref means subsequent submits reuse the gate.
       if (chokepointRef.current === null) {
         chokepointRef.current = createChokepoint(
-          readChokepointEnv({ cfg: loadConfig(), ...(sessionTarget ? { sessionTarget } : {}) }),
+          readChokepointEnv({
+            cfg: loadConfig(),
+            ...(sessionTarget ? { sessionTarget } : {}),
+            // v0.3.B — per-invocation allowlist from --scope. Empty
+            // array is the back-compat no-op; non-empty array is
+            // enforced by `checkTarget` after the denylist check.
+            ...(allowlist && allowlist.length > 0 ? { allowlist } : {}),
+          }),
         );
       }
       try {
@@ -806,4 +931,125 @@ async function openFileInOS(path: string): Promise<void> {
   // viewer. We still `await` so we surface launch errors (binary
   // missing, etc.) — the caller prints a friendly message.
   await execFileAsync(cmd, args, { timeout: 5_000 });
+}
+
+/**
+ * v0.3.B — the `/run <tool> [args...]` slash command's executor.
+ *
+ * The slash dispatcher calls this closure with the tool name and
+ * a free-form arg list. We:
+ *   1. Build the full 27-tool registry once (cached at module
+ *      scope; tools are registered lazily because the agent loop
+ *      doesn't need the destructive / type-to-confirm tools).
+ *   2. Lazily build the chokepoint if it isn't already built
+ *      (otherwise `/run` would crash on a fresh TUI before the
+ *      first LLM submit).
+ *   3. Translate the slash args into a Zod-friendly `args` object
+ *      using a small convention: first arg is `target`, the rest
+ *      are joined into a single `options` string (the way an
+ *      operator would type a CLI invocation).
+ *   4. Hand off to `runInner` from `@gmft/core`, which runs the
+ *      full chokepoint + tool-run pipeline.
+ *   5. Format the `ExecuteResult` as a `Msg` (role: 'tool') with
+ *      the tool's output, error, or denial reason.
+ *
+ * Destructive + type-to-confirm tools are denied with a clear
+ * "no handler provided" reason (see `runInner` at
+ * packages/core/src/tools/executor.ts:155). Operators who want
+ * the high-friction wifi attacks run from the LLM-driven path
+ * (where the approval prompt renders inline).
+ */
+const CATALOG_REGISTRY = buildCatalogRegistry();
+
+async function runToolForSession(
+  tool: string,
+  args: readonly string[],
+  opts: { getChokepoint: () => ReturnType<typeof createChokepoint> },
+): Promise<{ msg: Msg; denied: boolean }> {
+  const chokepoint = opts.getChokepoint();
+  const toolCtx: ToolContext = {
+    cwd: process.cwd(),
+    env: process.env,
+    cfg: { sandbox: { mode: 'host' as const } },
+  };
+  // Translate the slash args into the tool's expected arg shape.
+  // Convention: first token is `target`; remaining tokens are
+  // joined as `options` (the binary's CLI flags). Tools without
+  // `targetRequired` get the full arg list as `options` and
+  // `target` is omitted. This matches the way operators type
+  // `/run <tool> <args...>` at the prompt.
+  const toolEntry = CATALOG_REGISTRY.get(tool);
+  if (!toolEntry) {
+    return {
+      msg: {
+        id: `run-${Date.now()}-unknown`,
+        role: 'tool',
+        content: `Unknown tool: ${tool}`,
+        ts: Date.now(),
+      },
+      denied: true,
+    };
+  }
+  const isTargetRequired = toolEntry.flags.includes('targetRequired');
+  const toolArgs: Record<string, unknown> = isTargetRequired
+    ? {
+        target: args[0] ?? '',
+        ...(args.length > 1 ? { options: args.slice(1).join(' ') } : {}),
+      }
+    : args.length > 0
+      ? { options: args.join(' ') }
+      : {};
+
+  const result: ExecuteResult = await runInner(
+    tool,
+    toolArgs,
+    CATALOG_REGISTRY,
+    chokepoint,
+    toolCtx,
+    // No `onConfirmation`: high-friction tools are denied with a
+    // clear "needs confirmation but no handler provided" reason.
+    // The LLM-driven path is the right place to run destructive
+    // tools interactively.
+  );
+
+  const ts = Date.now();
+  if (result.ok) {
+    const out = result.output as Record<string, unknown>;
+    // Tools that produce findings store them under `findings`; the
+    // rest typically have `summary` or `stdout` (a string). We
+    // stringify whatever the tool returned so the chat gets a
+    // readable transcript entry.
+    let body: string;
+    if (typeof out.stdout === 'string') {
+      body = out.stdout;
+    } else if (typeof out.summary === 'string') {
+      body = out.summary;
+    } else if (Array.isArray(out.findings)) {
+      body = `${tool} produced ${out.findings.length} finding(s).`;
+    } else {
+      body = JSON.stringify(out, null, 2);
+    }
+    return {
+      msg: {
+        id: `run-${ts}-ok`,
+        role: 'tool',
+        content: body,
+        ts,
+        toolCallId: `run-${ts}`,
+      },
+      denied: false,
+    };
+  }
+  // Failure path — denied (chokepoint) or runtime error.
+  return {
+    msg: {
+      id: `run-${ts}-fail`,
+      role: 'tool',
+      content:
+        (result.error ? `${result.reason}: ${result.error}` : result.reason) ??
+        'unknown failure',
+      ts,
+    },
+    denied: result.denied === true,
+  };
 }

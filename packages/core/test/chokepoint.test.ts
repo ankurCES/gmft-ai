@@ -20,6 +20,9 @@ const baseEnv: ChokepointEnv = {
   allowPrivateNetworks: false,
   allowElevation: false,
   denylist: [],
+  // v0.3.B — empty allowlist is the back-compat default. Individual
+  // describe blocks override it as needed.
+  allowlist: [],
   runnerCapabilities: testCaps,
   allowUnsandboxedDestructive: false,
 };
@@ -113,6 +116,46 @@ describe('createChokepoint', () => {
       const cp = createChokepoint({ ...baseEnv, denylist: ['evil.example.com'] });
       expect(cp.decide(call({ flags: ['targetRequired'], args: { target: 'evil.example.com' } })))
         .toEqual({ kind: 'deny', reason: 'target "evil.example.com" is on the chokepoint denylist' });
+    });
+
+    // v0.3.B — per-invocation allowlist (--scope <path>). Empty list
+    // is a no-op (back-compat); non-empty list denies anything not
+    // explicitly listed. The check fires AFTER the denylist, so a
+    // host can be both allowlisted and denylisted (deny wins).
+    it('skips the allowlist check when allowlist is empty (back-compat)', () => {
+      const cp = createChokepoint({ ...baseEnv, allowlist: [] });
+      expect(cp.decide(call({ flags: ['targetRequired'], args: { target: 'one.example.com' } })).kind)
+        .toBe('allow');
+      expect(cp.decide(call({ flags: ['targetRequired'], args: { target: 'two.example.com' } })).kind)
+        .toBe('allow');
+    });
+
+    it('denies a target not in the non-empty allowlist', () => {
+      const cp = createChokepoint({ ...baseEnv, allowlist: ['scanme.nmap.org', 'testphp.vulnweb.com'] });
+      expect(cp.decide(call({ flags: ['targetRequired'], args: { target: 'other.example.com' } })))
+        .toEqual({
+          kind: 'deny',
+          reason:
+            'target "other.example.com" is not in the session allowlist ' +
+            '(loaded from --scope; 2 entries listed)',
+        });
+    });
+
+    it('allows a target that is in the non-empty allowlist', () => {
+      const cp = createChokepoint({ ...baseEnv, allowlist: ['scanme.nmap.org'] });
+      expect(cp.decide(call({ flags: ['targetRequired'], args: { target: 'scanme.nmap.org' } })).kind)
+        .toBe('allow');
+    });
+
+    it('uses singular "entry" wording for a single-entry allowlist', () => {
+      const cp = createChokepoint({ ...baseEnv, allowlist: ['scanme.nmap.org'] });
+      expect(cp.decide(call({ flags: ['targetRequired'], args: { target: 'other.example.com' } })))
+        .toEqual({
+          kind: 'deny',
+          reason:
+            'target "other.example.com" is not in the session allowlist ' +
+            '(loaded from --scope; 1 entry listed)',
+        });
     });
 
     it('denies a targetRequired call whose args.target does not match the session target', () => {
@@ -371,5 +414,23 @@ describe('readChokepointEnv', () => {
       env: { GMFT_ALLOW_UNSANDBOXED_DESTRUCTIVE: '1' },
     });
     expect(got.allowUnsandboxedDestructive).toBe(false);
+  });
+
+  // v0.3.B — per-invocation allowlist plumbing.
+  it('defaults allowlist to [] when not provided (back-compat)', () => {
+    const got = readChokepointEnv({
+      cfg: { chokepoint: { allowPrivateNetworks: false, denylist: [] } },
+      env: {},
+    });
+    expect(got.allowlist).toEqual([]);
+  });
+
+  it('passes the provided allowlist through verbatim', () => {
+    const got = readChokepointEnv({
+      cfg: { chokepoint: { allowPrivateNetworks: false, denylist: [] } },
+      env: {},
+      allowlist: ['scanme.nmap.org', '10.0.0.5'],
+    });
+    expect(got.allowlist).toEqual(['scanme.nmap.org', '10.0.0.5']);
   });
 });
