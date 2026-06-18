@@ -30,6 +30,19 @@ import { SessionStore } from './session/store.js';
 import { parseSandboxFlag } from './sandbox-flag.js';
 import { writePostExitReport, parseReportFormat } from './report-flag.js';
 import { loadScopeFile, ScopeFileError } from './scope-file.js';
+import {
+  verifyAuditLog,
+  readAuditLog,
+  tailAuditLog,
+  type LogFilters,
+} from './cli-audit.js';
+import {
+  auditDir,
+  auditLogPath,
+  getOrCreateHmacKey,
+  type AuditEvent,
+  type AuditEventKind,
+} from '@gmft/core';
 
 const cli = meow(
   `
@@ -98,6 +111,161 @@ const cli = meow(
 );
 
 const themeName = (cli.flags.theme ?? 'auto') as 'auto' | 'dark' | 'light' | 'high-contrast';
+
+// v0.3.C — `gmft audit {verify,log,tail}` subcommand. This branch
+// runs *before* the --report-format check, onboarding, the TUI
+// mount, and the post-TUI report write: it should never trigger any
+// of those. `process.exit` is the contract — control does not
+// return to the rest of the file.
+if (process.argv[2] === 'audit') {
+  const sub = process.argv[3];
+  const dir = auditDir();
+  const logPath = auditLogPath();
+  // `getOrCreateHmacKey` creates the key on disk on first call
+  // (or reads it from the secret store). For `verify`/`log`/`tail`
+  // we want the *existing* key — the one that was used to sign the
+  // events. If the key file doesn't exist, the log is necessarily
+  // empty too, and the verifier will return `ok: true, eventCount: 0`.
+  const key = getOrCreateHmacKey({ auditDir: dir });
+
+  if (sub === 'verify') {
+    const r = verifyAuditLog(logPath, key);
+    if (r.ok) {
+      if (r.eventCount === 0) {
+        process.stdout.write('audit log: empty (no events)\n');
+      } else {
+        process.stdout.write(
+          `audit log: ok (${r.eventCount} events, last: ${r.lastEvent.kind} @ ${r.lastEvent.ts})\n`,
+        );
+      }
+      process.exit(0);
+    } else {
+      process.stdout.write(
+        `audit log: BROKEN at line ${r.brokenAt}\n` +
+        `  recorded: ${r.recorded}\n` +
+        `  computed: ${r.computed}\n` +
+        `  ${r.eventCount - 1} event(s) verified before the break; ` +
+        `${r.unverifiedFrom === 0 ? 'none' : r.unverifiedFrom}+ unverified after.\n`,
+      );
+      process.exit(1);
+    }
+  }
+
+  if (sub === 'log') {
+    // Hand-rolled flag parser: `--limit N`, `--since ISO`, `--until ISO`,
+    // `--kind X` (repeatable). Unknown flag → exit 2 with a usage line.
+    const argv = process.argv.slice(4);
+    const filters: LogFilters = {};
+    // The writer accepts any AuditEventKind; the verifier doesn't
+    // care which kinds are present. The CLI's --kind filter is a UX
+    // shortcut — the list below mirrors the AuditEventKind union in
+    // packages/core/src/audit/types.ts exactly so `--kind` rejects
+    // typos before the read. Adding a new kind to the union means
+    // adding it here too (a one-line reminder in the kind-comment
+    // makes that findable).
+    const knownKinds: ReadonlySet<AuditEventKind> = new Set<AuditEventKind>([
+      'tool-call',
+      'tool-result',
+      'chokepoint-decision',
+      'session-start',
+      'session-end',
+      'runner-mode',
+      'onboard',
+    ]);
+    const kinds: AuditEventKind[] = [];
+    for (let i = 0; i < argv.length; i++) {
+      const a = argv[i]!;
+      if (a === '--limit') {
+        const n = Number(argv[++i]);
+        if (!Number.isInteger(n) || n < 1) {
+          process.stderr.write(`gmft audit log: --limit must be a positive integer\n`);
+          process.exit(2);
+        }
+        filters.limit = n;
+      } else if (a === '--since') {
+        filters.since = argv[++i] ?? '';
+      } else if (a === '--until') {
+        filters.until = argv[++i] ?? '';
+      } else if (a === '--kind') {
+        const k = argv[++i] as AuditEventKind;
+        if (!knownKinds.has(k)) {
+          process.stderr.write(
+            `gmft audit log: unknown --kind '${k}'. ` +
+            `Expected one of: ${[...knownKinds].join(', ')}\n`,
+          );
+          process.exit(2);
+        }
+        kinds.push(k);
+      } else if (a === '--help' || a === '-h') {
+        process.stdout.write(
+          'Usage: gmft audit log [--limit N] [--since ISO] [--until ISO] [--kind KIND]...\n',
+        );
+        process.exit(0);
+      } else {
+        process.stderr.write(
+          `gmft audit log: unknown argument '${a}'\n` +
+          'Usage: gmft audit log [--limit N] [--since ISO] [--until ISO] [--kind KIND]...\n',
+        );
+        process.exit(2);
+      }
+    }
+    if (kinds.length > 0) filters.kinds = kinds;
+
+    const rows = readAuditLog(logPath, filters);
+    if (rows.length === 0) {
+      process.stdout.write('(no events)\n');
+      process.exit(0);
+    }
+    for (const row of rows) {
+      process.stdout.write(formatAuditLine(row.line, row.event) + '\n');
+    }
+    process.exit(0);
+  }
+
+  if (sub === 'tail') {
+    let stop = false;
+    process.on('SIGINT', () => {
+      stop = true;
+    });
+    process.stdout.write(`# tail ${logPath} (Ctrl-C to stop)\n`);
+    await tailAuditLog(
+      logPath,
+      (line) => {
+        process.stdout.write(line + '\n');
+      },
+      {
+        pollMs: 500,
+        shouldStop: () => stop,
+      },
+    );
+    process.exit(0);
+  }
+
+  if (sub === '--help' || sub === '-h' || sub === undefined) {
+    process.stdout.write(
+      'Usage: gmft audit <subcommand>\n' +
+      '\n' +
+      'Subcommands\n' +
+      '  verify   Walk the hash chain, report integrity. Exit 0 if intact, 1 if broken.\n' +
+      '  log      Print recent events (most recent first). Flags: --limit, --since, --until, --kind.\n' +
+      '  tail     Follow the log in real time (Ctrl-C to stop).\n',
+    );
+    process.exit(sub === undefined ? 2 : 0);
+  }
+
+  process.stderr.write(`gmft audit: unknown subcommand '${sub}'\n`);
+  process.exit(2);
+}
+
+/**
+ * Format a single audit row for `gmft audit log` output. The shape
+ * is intentionally narrow: `<line>\t<ts>\t<kind>\t<payload-json>`.
+ * The payload is JSON-encoded on one line so the output is grep-
+ * friendly without a separate pretty-printer pass.
+ */
+function formatAuditLine(line: number, ev: AuditEvent): string {
+  return `${line}\t${ev.ts}\t${ev.kind}\t${JSON.stringify(ev.payload)}`;
+}
 
 // v0.3.B — validate --report-format early. The post-exit handler
 // only accepts `json` or `pdf`; reject anything else before the TUI
