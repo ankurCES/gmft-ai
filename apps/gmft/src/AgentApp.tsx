@@ -23,30 +23,32 @@
  * is the only React-aware layer, and it's the only place that knows
  * about the async apiKey lookup.
  *
- * v0.3.C — audit emission is a deliberate non-change in this file.
- * `@gmft/core/audit` ships the `AuditWriter`, the `withAuditChokepoint`
- * decorator, and the `gmft audit {verify,log,tail}` CLI (see
- * ADR-0013). The TUI integration — wrapping `createChokepoint` here
- * with `withAuditChokepoint` and threading the resulting sink into
- * `runTurn` — lands in a follow-up commit. The gap is intentional:
- * the audit-chain contract is reviewable in isolation (CLI tests
- * + manual `gmft audit verify` against a seeded log), and the TUI
- * emission is a one-place wrap when it ships. See ADR-0013 §7.
+ * v0.3.C follow-up — audit emission is wired in this file. The
+ * `auditSinkRef` mirrors `chokepointRef` (both built lazily on
+ * the first LLM submit or `/run`). `withAuditChokepoint` wraps
+ * the gate so every decision lands in the hash-chained
+ * `~/.config/gmft/audit/audit.jsonl`. `GMFT_DISABLE_AUDIT_LOG=true`
+ * swaps the sink for `NOOP_SINK` at construction time. See ADR-0013.
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
+  auditDir,
+  AuditWriter,
   buildSystemPrompt,
   createChokepoint,
   createModel,
   getDefaultModel,
   readChokepointEnv,
   loadConfig,
+  makeAuditSink,
   runInner,
   runTurn,
   ToolRegistry,
+  withAuditChokepoint,
   withSupervisor,
   type AgentEvent,
+  type AuditSink,
   type ChatMessage,
   type CreateModelOpts,
   type ExecuteResult,
@@ -483,6 +485,27 @@ export function AgentApp({
   // path (its runTurn is mocked).
   const chokepointRef = useRef<ReturnType<typeof createChokepoint> | null>(null);
 
+  // v0.3.C follow-up — audit sink. Built lazily alongside the
+  // chokepoint (one wrap, one place). The sink writes to the
+  // hash-chained `~/.config/gmft/audit/audit.jsonl` via `AuditWriter`.
+  // `makeAuditSink` honors `GMFT_DISABLE_AUDIT_LOG=true` by swapping
+  // in `NOOP_SINK` at construction time, so a flipped env var after
+  // AgentApp boot has no effect (defense-in-depth — a long-running
+  // TUI shouldn't be re-wired mid-session).
+  //
+  // The writer's `append` returns `Promise<AuditEvent>` (the CLI's
+  // `verify` path needs the event); the sink interface returns
+  // `Promise<void>` (the decorator only needs the side effect).
+  // `writerToSink` adapts the writer to the sink contract — the
+  // returned event is discarded.
+  const writerToSink = (w: AuditWriter): AuditSink => ({
+    append: (kind, payload) => {
+      void w.append(kind, payload);
+      return Promise.resolve();
+    },
+  });
+  const auditSinkRef = useRef<AuditSink | null>(null);
+
   // v0.2.A.2 — the supervisor's advice injection needs the SAME array
   // to be visible to both the inner `runTurn` and the next user turn.
   // The wrapper does `historyRef.current = [...historyRef.current, msg]`
@@ -552,12 +575,23 @@ export function AgentApp({
             runToolForSession(tool, args, {
               getChokepoint: () => {
                 if (chokepointRef.current === null) {
-                  chokepointRef.current = createChokepoint(
-                    readChokepointEnv({
-                      cfg: loadConfig(),
-                      ...(sessionTarget ? { sessionTarget } : {}),
-                      ...(allowlist && allowlist.length > 0 ? { allowlist } : {}),
-                    }),
+                  // v0.3.C follow-up — build the audit sink alongside
+                  // the chokepoint and wrap with `withAuditChokepoint`
+                  // so every `/run` decision lands in the chain.
+                  if (auditSinkRef.current === null) {
+                    auditSinkRef.current = makeAuditSink(
+                      writerToSink(new AuditWriter({ auditDir: auditDir() })),
+                    );
+                  }
+                  chokepointRef.current = withAuditChokepoint(
+                    createChokepoint(
+                      readChokepointEnv({
+                        cfg: loadConfig(),
+                        ...(sessionTarget ? { sessionTarget } : {}),
+                        ...(allowlist && allowlist.length > 0 ? { allowlist } : {}),
+                      }),
+                    ),
+                    auditSinkRef.current,
                   );
                 }
                 return chokepointRef.current;
@@ -595,15 +629,27 @@ export function AgentApp({
       // (not at render time, since `loadConfig` is a sync disk read).
       // The cached ref means subsequent submits reuse the gate.
       if (chokepointRef.current === null) {
-        chokepointRef.current = createChokepoint(
-          readChokepointEnv({
-            cfg: loadConfig(),
-            ...(sessionTarget ? { sessionTarget } : {}),
-            // v0.3.B — per-invocation allowlist from --scope. Empty
-            // array is the back-compat no-op; non-empty array is
-            // enforced by `checkTarget` after the denylist check.
-            ...(allowlist && allowlist.length > 0 ? { allowlist } : {}),
-          }),
+        // v0.3.C follow-up — build the audit sink once and wrap the
+        // chokepoint with `withAuditChokepoint`. The sink lives in
+        // its own ref so `/run` (above) and the LLM submit (here)
+        // share the same AuditWriter — one chain, one mutex.
+        if (auditSinkRef.current === null) {
+          auditSinkRef.current = makeAuditSink(
+            writerToSink(new AuditWriter({ auditDir: auditDir() })),
+          );
+        }
+        chokepointRef.current = withAuditChokepoint(
+          createChokepoint(
+            readChokepointEnv({
+              cfg: loadConfig(),
+              ...(sessionTarget ? { sessionTarget } : {}),
+              // v0.3.B — per-invocation allowlist from --scope. Empty
+              // array is the back-compat no-op; non-empty array is
+              // enforced by `checkTarget` after the denylist check.
+              ...(allowlist && allowlist.length > 0 ? { allowlist } : {}),
+            }),
+          ),
+          auditSinkRef.current,
         );
       }
       try {
