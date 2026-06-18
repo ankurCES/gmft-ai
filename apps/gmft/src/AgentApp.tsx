@@ -34,11 +34,13 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   auditDir,
+  auditLogPath,
   AuditWriter,
   buildSystemPrompt,
   createChokepoint,
   createModel,
   getDefaultModel,
+  getOrCreateHmacKey,
   readChokepointEnv,
   readAuditChainHead,
   loadConfig,
@@ -99,10 +101,14 @@ import type { StatusInfo } from './ui/components/StatusRail.js';
 import { SessionStore } from './session/store.js';
 import {
   dispatchSlash,
+  type AuditSubcommand,
   type ReportFormat,
+  type RunAuditOpts,
+  type RunAuditResult,
   type RunReportOpts,
   type RunReportResult,
 } from './session/commands.js';
+import { verifyAuditLog, readAuditLog } from './cli-audit.js';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 
@@ -584,6 +590,11 @@ export function AgentApp({
           onExit: handleExit,
           runReport: (opts: RunReportOpts) => runReportForSession(session, opts),
           openFile: openFileInOS,
+          // v0.3.C follow-up — `/audit {verify,log,tail}` uses the
+          // same verifyAuditLog / readAuditLog primitives as the
+          // `gmft audit` CLI dispatch. The slash command returns a
+          // structured result; AgentApp handles the body formatting.
+          runAudit: (opts: RunAuditOpts) => runAudit(opts),
           // v0.3.B — direct tool invocation via `/run <tool> [args...]`.
           // Builds the chokepoint lazily so the slash command works
           // even if the user runs `/run` before submitting any LLM
@@ -1125,5 +1136,76 @@ async function runToolForSession(
       ts,
     },
     denied: result.denied === true,
+  };
+}
+
+/**
+ * v0.3.C follow-up — `/audit` slash-command backend.
+ *
+ * Mirrors the `gmft audit {verify,log,tail}` CLI dispatch by reusing
+ * the same `verifyAuditLog` / `readAuditLog` / `tailAuditLog`
+ * primitives from `cli-audit.ts`. The audit key is the same on-disk
+ * HMAC key the writer uses — `getOrCreateHmacKey` will create it on
+ * first invocation, which is consistent with how the writer
+ * initializes its key (the first chokepoint decision also triggers
+ * creation).
+ *
+ * The TUI integration intentionally does NOT support live `tail` —
+ * a 500ms-poll slash command would couple slash-command lifetime to
+ * chat-pane render. `/audit tail` reads the current tail snapshot
+ * and stops, matching the CLI's `readAuditLog` semantics with a
+ * `tail: true` filter (last N lines, no follow). Operators who want
+ * true streaming should run `gmft audit tail` from a shell.
+ */
+async function runAudit(opts: RunAuditOpts): Promise<RunAuditResult> {
+  const dir = auditDir();
+  const logPath = auditLogPath();
+  const key = getOrCreateHmacKey({ auditDir: dir });
+  if (opts.subcommand === 'verify') {
+    const result = verifyAuditLog(logPath, key);
+    if (result.ok) {
+      return {
+        ok: true,
+        body:
+          `✓ audit chain intact (${result.eventCount} events, 0 broken)\n` +
+          `  last event: ${result.lastEvent.ts} (${result.lastEvent.kind})`,
+      };
+    }
+    return {
+      ok: false,
+      body:
+        `✗ audit chain BROKEN at line ${result.brokenAt}\n` +
+        `  recorded: ${result.recorded.slice(0, 16)}...\n` +
+        `  computed: ${result.computed.slice(0, 16)}...\n` +
+        `  events ${result.unverifiedFrom}..${result.eventCount} cannot be verified`,
+    };
+  }
+  if (opts.subcommand === 'log') {
+    const entries = readAuditLog(logPath, { limit: opts.limit ?? 50 });
+    if (entries.length === 0) {
+      return { ok: true, body: '(no audit events on disk yet)' };
+    }
+    const lines = entries.map(
+      (e) => `${e.line}\t${e.event.ts}\t${e.event.kind}\t${JSON.stringify(e.event.payload)}`,
+    );
+    return {
+      ok: true,
+      body: `Last ${entries.length} audit event(s):\n` + lines.join('\n'),
+    };
+  }
+  // tail — read the most recent entries (the existing `limit` filter
+  // already returns newest-first, so this is just `/audit log` with a
+  // smaller default). A true streaming follow would couple slash-
+  // command lifetime to chat-pane render; see the comment above.
+  const entries = readAuditLog(logPath, { limit: opts.limit ?? 20 });
+  if (entries.length === 0) {
+    return { ok: true, body: '(no audit events on disk yet)' };
+  }
+  const lines = entries.map(
+    (e) => `${e.line}\t${e.event.ts}\t${e.event.kind}\t${JSON.stringify(e.event.payload)}`,
+  );
+  return {
+    ok: true,
+    body: `Tail (most recent ${entries.length} event(s)):\n` + lines.join('\n'),
   };
 }

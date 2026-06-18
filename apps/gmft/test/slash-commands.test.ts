@@ -503,4 +503,111 @@ describe('dispatchSlash', () => {
       expect(r.reply!.content).toContain('/run');
     });
   });
+
+  // ───── /audit (v0.3.C follow-up) ───────────────────────────────
+  describe('/audit', () => {
+    it('/audit verify shows intact-chain body when ok=true', async () => {
+      const runAudit = vi.fn().mockResolvedValue({
+        ok: true,
+        body: '✓ audit chain intact (1247 events, 0 broken)\n  last event: 2026-06-17T19:23:45.123Z (tool-result)',
+      });
+      const r = await dispatchSlash('/audit verify', makeCtx({ runAudit }));
+      if (r.kind !== 'handled') throw new Error('narrow');
+      expect(runAudit).toHaveBeenCalledWith({ subcommand: 'verify' });
+      expect(r.reply!.content).toContain('✓ audit chain intact');
+      expect(r.reply!.id.endsWith('-audit-verify')).toBe(true);
+    });
+
+    it('/audit verify with broken chain still shows the body (regression: operator must see WHERE)', async () => {
+      // ok=false on verify means the chain is broken — the chat
+      // reply still shows the body so the operator can see which
+      // line broke. The idSuffix flips to 'audit-broken' so the
+      // UI can color it red.
+      const runAudit = vi.fn().mockResolvedValue({
+        ok: false,
+        body:
+          '✗ audit chain BROKEN at line 847\n  recorded: a83f3bb3c8...\n  computed: f0e6c6e9a1...\n  events 848..1247 cannot be verified',
+      });
+      const r = await dispatchSlash('/audit verify', makeCtx({ runAudit }));
+      if (r.kind !== 'handled') throw new Error('narrow');
+      expect(r.reply!.content).toContain('BROKEN at line 847');
+      expect(r.reply!.id.endsWith('-audit-broken')).toBe(true);
+    });
+
+    it('/audit log defaults to limit=50 when no N is given', async () => {
+      const runAudit = vi.fn().mockResolvedValue({
+        ok: true,
+        body: 'Last 50 audit event(s):\n...',
+      });
+      const r = await dispatchSlash('/audit log', makeCtx({ runAudit }));
+      if (r.kind !== 'handled') throw new Error('narrow');
+      expect(runAudit).toHaveBeenCalledWith({ subcommand: 'log' });
+      expect(r.reply!.content).toContain('Last 50 audit event');
+    });
+
+    it('/audit log 10 passes the limit through', async () => {
+      const runAudit = vi.fn().mockResolvedValue({
+        ok: true,
+        body: 'Last 10 audit event(s):\n...',
+      });
+      const r = await dispatchSlash('/audit log 10', makeCtx({ runAudit }));
+      if (r.kind !== 'handled') throw new Error('narrow');
+      expect(runAudit).toHaveBeenCalledWith({ subcommand: 'log', limit: 10 });
+    });
+
+    it('/audit log abc returns a usage reply without invoking the runner', async () => {
+      const runAudit = vi.fn();
+      const r = await dispatchSlash('/audit log abc', makeCtx({ runAudit }));
+      if (r.kind !== 'handled') throw new Error('narrow');
+      expect(runAudit).not.toHaveBeenCalled();
+      expect(r.reply!.content).toContain('Usage: /audit log');
+    });
+
+    it('/audit tail invokes the runner with subcommand=tail', async () => {
+      const runAudit = vi.fn().mockResolvedValue({
+        ok: true,
+        body: 'Tail (most recent 20 event(s)):\n...',
+      });
+      const r = await dispatchSlash('/audit tail', makeCtx({ runAudit }));
+      if (r.kind !== 'handled') throw new Error('narrow');
+      expect(runAudit).toHaveBeenCalledWith({ subcommand: 'tail' });
+      expect(r.reply!.content).toContain('Tail');
+    });
+
+    it('/audit with no subcommand returns a usage reply', async () => {
+      const runAudit = vi.fn();
+      const r = await dispatchSlash('/audit', makeCtx({ runAudit }));
+      if (r.kind !== 'handled') throw new Error('narrow');
+      expect(runAudit).not.toHaveBeenCalled();
+      expect(r.reply!.content).toContain('Usage: /audit');
+    });
+
+    it('/audit bogus returns a usage reply without invoking the runner', async () => {
+      const runAudit = vi.fn();
+      const r = await dispatchSlash('/audit bogus', makeCtx({ runAudit }));
+      if (r.kind !== 'handled') throw new Error('narrow');
+      expect(runAudit).not.toHaveBeenCalled();
+      expect(r.reply!.content).toContain('Unknown audit subcommand');
+    });
+
+    it('returns a friendly "not wired" reply when runAudit is absent', async () => {
+      const r = await dispatchSlash('/audit verify', makeCtx());
+      if (r.kind !== 'handled') throw new Error('narrow');
+      expect(r.reply!.content).toContain('not wired');
+    });
+
+    it('help text mentions /audit', async () => {
+      const r = await dispatchSlash('/help', makeCtx());
+      if (r.kind !== 'handled') throw new Error('narrow');
+      // HELP_TEXT is a fixed-width table — "/audit verify" is
+      // padded with leading spaces. Check the bare command name
+      // plus each subcommand fragment; that catches a missing
+      // subcommand without coupling to whitespace.
+      expect(r.reply!.content).toContain('/audit');
+      expect(r.reply!.content).toContain('verify');
+      expect(r.reply!.content).toContain('walk the audit chain');
+      expect(r.reply!.content).toContain('show recent audit events');
+      expect(r.reply!.content).toContain('follow the audit log');
+    });
+  });
 });

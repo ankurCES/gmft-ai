@@ -118,6 +118,14 @@ export interface SlashContext {
    */
   openFile?: (path: string) => Promise<void>;
   /**
+   * v0.3.C — invoke an audit operation (verify / log / tail).
+   * Wired in by `AgentApp` so the slash command stays pure-ish
+   * (the same way `runReport` and `runTool` work). The callback
+   * returns a structured result and a human-readable body. If
+   * absent, `/audit` returns a friendly "audit not wired" reply.
+   */
+  runAudit?: (opts: RunAuditOpts) => Promise<RunAuditResult>;
+  /**
    * v0.3.B — invoke a tool directly. Wired in by `AgentApp` so the
    * `/run <tool> [args...]` slash command can execute a tool with
    * the same chokepoint + audit pipeline the agent loop uses.
@@ -132,6 +140,26 @@ export interface SlashContext {
     tool: string,
     args: readonly string[],
   ) => Promise<{ msg: Msg; denied: boolean }>;
+}
+
+export type AuditSubcommand = 'verify' | 'log' | 'tail';
+
+export interface RunAuditOpts {
+  subcommand: AuditSubcommand;
+  /** For `log` — how many recent events to read. Defaults to 50. */
+  limit?: number;
+}
+
+export interface RunAuditResult {
+  /**
+   * `true` when the operation ran without error (verify ok, log
+   * read, tail started/stopped cleanly). For verify, `false`
+   * means the chain is BROKEN — that's an error worth showing
+   * the operator, not a fault of the slash command.
+   */
+  ok: boolean;
+  /** Human-readable body to render into the chat reply. */
+  body: string;
 }
 
 export const HELP_TEXT =
@@ -149,6 +177,9 @@ export const HELP_TEXT =
   '                             write a report (default: md). pdf also opens it.\n' +
   '  /tools [domain]             list available tools (shell|http|file|search|recon|binary|note)\n' +
   '  /run <tool> [args...]       invoke a tool directly (chokepoint applies)\n' +
+  '  /audit verify               walk the audit chain, report integrity\n' +
+  '  /audit log [n]              show recent audit events (default 50)\n' +
+  '  /audit tail                 follow the audit log (500ms poll)\n' +
   '  /exit                       exit (alias for Ctrl-C)';
 
 /**
@@ -268,6 +299,10 @@ export async function dispatchSlash(
 
   if (cmd === '/run') {
     return await handleRun(text, ctx, reply);
+  }
+
+  if (cmd === '/audit') {
+    return await handleAudit(arg, rest, ctx, reply);
   }
 
   // Unknown command — never forward.
@@ -436,6 +471,102 @@ async function handleReport(
     return {
       kind: 'handled',
       reply: reply(`Report failed: ${(e as Error).message}`, 'report-error'),
+    };
+  }
+}
+
+/**
+ * `/audit <subcommand> [args...]` — invoke an audit operation from
+ * the TUI. Mirrors the `gmft audit {verify,log,tail}` CLI surface so
+ * the operator doesn't have to leave the chat to inspect the chain.
+ *
+ * Subcommands:
+ *   - `verify` — walk the chain, recompute every hash, report the
+ *     first broken line + count of verified events. `ok: true` for
+ *     an intact chain; `ok: false` for a broken one (the chat reply
+ *     still shows the body so the operator can see where it broke).
+ *   - `log [n]` — read the most recent N events (default 50). The
+ *     N is a single integer argument after `log`.
+ *   - `tail` — follow the log in real time. The current implementation
+ *     prints the initial batch (head + tail) and stops — a true
+ *     streaming poll would couple slash-command lifetime to the
+ *     chat-pane render. Operators who want to watch new events live
+ *     should run `gmft audit tail` from a shell.
+ *
+ * The slash command stays pure — the actual chain math lives in
+ * `apps/gmft/src/cli-audit.ts` (`verifyAuditLog`, `readAuditLog`,
+ * `tailAuditLog`) and is wrapped by `AgentApp.runAudit`.
+ */
+async function handleAudit(
+  sub: string | undefined,
+  rest: string,
+  ctx: SlashContext,
+  reply: (content: string, idSuffix: string) => Msg,
+): Promise<SlashResult> {
+  if (!ctx.runAudit) {
+    return {
+      kind: 'handled',
+      reply: reply(
+        'Audit is not wired into this build of gmft.',
+        'audit-noop',
+      ),
+    };
+  }
+  if (!sub) {
+    return {
+      kind: 'handled',
+      reply: reply(
+        'Usage: /audit verify | /audit log [n] | /audit tail',
+        'audit-usage',
+      ),
+    };
+  }
+  const subcommand = sub.toLowerCase();
+  if (subcommand !== 'verify' && subcommand !== 'log' && subcommand !== 'tail') {
+    return {
+      kind: 'handled',
+      reply: reply(
+        `Unknown audit subcommand: ${sub}\nUsage: /audit verify | /audit log [n] | /audit tail`,
+        'audit-usage',
+      ),
+    };
+  }
+  // For `log`, parse the optional N from `rest`. Empty / non-numeric
+  // falls back to the default (50, set by AgentApp.runAudit).
+  let limit: number | undefined;
+  if (subcommand === 'log' && rest.trim() !== '') {
+    const n = Number.parseInt(rest.trim(), 10);
+    if (!Number.isFinite(n) || n <= 0) {
+      return {
+        kind: 'handled',
+        reply: reply(
+          `Usage: /audit log [n]  (got "${rest.trim()}"; n must be a positive integer)`,
+          'audit-usage',
+        ),
+      };
+    }
+    limit = n;
+  }
+  try {
+    const result = await ctx.runAudit(
+      subcommand === 'log' ? { subcommand, ...(limit !== undefined ? { limit } : {}) } : { subcommand },
+    );
+    // For verify, `ok: false` is a real signal (broken chain) — we
+    // still show the body but tag the reply so the chat pane can
+    // color it red if it wants. For log/tail, `ok: false` is a
+    // reader error and we surface it as an error reply.
+    if (!result.ok && subcommand !== 'verify') {
+      return {
+        kind: 'handled',
+        reply: reply(`Audit ${subcommand} failed: ${result.body}`, 'audit-error'),
+      };
+    }
+    const idSuffix = subcommand === 'verify' && !result.ok ? 'audit-broken' : `audit-${subcommand}`;
+    return { kind: 'handled', reply: reply(result.body, idSuffix) };
+  } catch (e) {
+    return {
+      kind: 'handled',
+      reply: reply(`Audit ${subcommand} failed: ${(e as Error).message}`, 'audit-error'),
     };
   }
 }
