@@ -1,5 +1,6 @@
 /**
  * v0.2.A — supervisor rule engine: Rules A, B, C.
+ * v0.4-A — adds Rule E (risk-escalation). See ADR-0014.
  *
  * Each rule is a pure state reducer: given a `SupervisorState` and an
  * `AgentEvent`, it returns the next state and (optionally) a fire.
@@ -21,6 +22,13 @@
  *     (C.2), or when a targetRequired tool is called without --target set
  *     (C.3). Operates on tool-call-request events.
  *
+ *   - Rule E (v0.4-A, risk escalation): fires `risk-escalation` when a
+ *     destructive tool is the FIRST tool of the turn. This is a stricter
+ *     gate than Rule C.1, which deliberately skips the first tool of
+ *     the turn (see the `toolsCalledThisTurn > 0` gate at line 339). See
+ *     ADR-0014 for the full rationale. MUST be wired BEFORE observeRuleC
+ *     in the wrapper so the gate reads the pre-call counter.
+ *
  * Phase A.1 (this file) is complete. The wrapper that calls these helpers
  * — applyFire / resetForNewTurn, plus the supervisor-fire / supervisor-
  * postmortem event emission — lives in the Phase A.2 task.
@@ -35,7 +43,14 @@
 // is keyed on the tool-family prefix (nmap_*, whois/dig, etc.).
 
 import type { AgentEvent } from './loop.js';
-import type { SupervisorState, SupervisorFire, LoopDetectedFire, OverclaimFire, PlanIssueFire } from './supervisor-types.js';
+import type {
+  SupervisorState,
+  SupervisorFire,
+  LoopDetectedFire,
+  OverclaimFire,
+  PlanIssueFire,
+  RiskEscalationFire,
+} from './supervisor-types.js';
 
 export const RULE_A_THRESHOLD = 4;
 export const RULE_A_WINDOW = 8;
@@ -374,6 +389,51 @@ export function observeRuleC(
   }
 
   return { state: next };
+}
+
+// =============================================================================
+// Rule E — Risk escalation (v0.4-A)
+// =============================================================================
+//
+// Fires when a destructive tool is the FIRST tool of the turn.
+// This is a stricter gate than Rule C.1, which deliberately skips
+// the first tool of the turn (see the `toolsCalledThisTurn > 0` gate
+// at line 339). The two rules cover different gaps:
+//
+//   C.1: "destructive without recon in turn" (requires >= 1 prior tool)
+//   E:   "destructive as the very first action of the turn"
+//
+// WIRING ORDER MATTERS: this rule MUST be invoked BEFORE observeRuleC
+// in the wrapper. observeRuleC increments `state.ruleC.toolsCalledThisTurn`
+// on every tool-call-request, so if Rule E runs after C, the pre-call
+// counter is `0` and the post-call counter is `1` — the gate would
+// over-fire on every 2nd+ destructive call in a turn. See ADR-0014
+// §Decision for the full rationale.
+//
+// Reads `state.ruleC.toolsCalledThisTurn === 0` against the pre-call
+// counter (i.e. the counter as it stands when this rule is called).
+// Does NOT mutate state — Rule C's increment is the source of truth
+// for `toolsCalledThisTurn`.
+
+export function observeRuleE(
+  state: SupervisorState,
+  event: AgentEvent,
+): { state: SupervisorState; fire?: RiskEscalationFire } {
+  if (event.type !== 'tool-call-request') return { state };
+  const { name, id, flags } = event;
+  const isDestructive = flags?.includes('destructive') ?? false;
+  if (!isDestructive) return { state };
+  // Pre-call counter — relies on Rule E running BEFORE Rule C in the wrapper.
+  if (state.ruleC.toolsCalledThisTurn !== 0) return { state };
+
+  const fire: RiskEscalationFire = {
+    kind: 'risk-escalation',
+    tool: name,
+    firstToolOfTurn: true,
+    advice: `Supervisor: you opened this turn with a destructive tool (\`${name}\`) — no prior recon, no read-only inspection, no plan statement. Recon first, then act.`,
+    targetEventId: id,
+  };
+  return { state, fire };
 }
 
 // =============================================================================
