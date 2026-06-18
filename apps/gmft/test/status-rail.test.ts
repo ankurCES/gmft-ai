@@ -15,7 +15,7 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { renderSeveritySparkline } from '../src/ui/components/StatusRail.js';
+import { renderAuditField, renderSeveritySparkline } from '../src/ui/components/StatusRail.js';
 
 describe('renderSeveritySparkline', () => {
   it('returns "(none)" when all counts are zero', () => {
@@ -68,5 +68,22 @@ describe('renderSeveritySparkline', () => {
     // doesn't crash.
     const partial = {} as Record<'info' | 'low' | 'medium' | 'high' | 'critical', number>;
     expect(renderSeveritySparkline(partial)).toBe('(none)');
+  });
+});
+
+describe('renderAuditField (v0.3.C breadcrumb)', () => {
+  it('renders "#N ✓" for a well-formed chain', () => {
+    expect(renderAuditField({ count: 1247, broken: false })).toBe('#1247 ✓');
+  });
+
+  it('renders "#N ✗ broken" when the chain tail is corrupt', () => {
+    expect(renderAuditField({ count: 846, broken: true })).toBe('#846 ✗ broken');
+  });
+
+  it('renders "#0 ✓" for an empty log (the rail still shows the seed)', () => {
+    // The AgentApp mount effect skips seeding the breadcrumb when
+    // count is 0 + not broken, so this case is hypothetical for the
+    // rail — but the pure renderer is correct either way.
+    expect(renderAuditField({ count: 0, broken: false })).toBe('#0 ✓');
   });
 });

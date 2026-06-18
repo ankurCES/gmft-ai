@@ -69,6 +69,14 @@ export interface StatusInfo {
    * renders `⚠ N fire(s)` in yellow.
    */
   fireCount: number;
+  /**
+   * v0.3.C follow-up — audit chain head snapshot. The StatusRail
+   * renders `audit #N ✓` (green) or `audit #N ✗ broken` (red) so
+   * the operator can see at a glance how many decisions have been
+   * recorded and whether the tail parses. Omit / `undefined` →
+   * no breadcrumb (audit disabled or no log yet).
+   */
+  auditChain?: { count: number; broken: boolean };
 }
 
 export function StatusRail({ status, theme }: { status: StatusInfo; theme: Theme }): React.JSX.Element {
@@ -107,10 +115,36 @@ export function StatusRail({ status, theme }: { status: StatusInfo; theme: Theme
           <Text color={status.findings > 0 ? 'yellow' : undefined}>{status.findings}</Text>
           {theme.muted('  ')}
           <SeveritySparkline counts={status.findingsBySeverity} />
+          {status.auditChain !== undefined && (
+            <>
+              {theme.muted('  audit ')}
+              <AuditField status={status} theme={theme} />
+            </>
+          )}
         </Text>
       </Box>
     </Box>
   );
+}
+
+/**
+ * Pure render of the audit breadcrumb. Public for unit testing.
+ *
+ *   - absent → `""` (no field rendered)
+ *   - well-formed → `#N ✓` (green)
+ *   - broken tail → `#N ✗ broken` (red)
+ */
+export function renderAuditField(info: { count: number; broken: boolean }): string {
+  return info.broken ? `#${info.count} ✗ broken` : `#${info.count} ✓`;
+}
+
+function AuditField({ status, theme }: { status: StatusInfo; theme: Theme }): React.JSX.Element {
+  const info = status.auditChain;
+  if (info === undefined) return <Text>{''}</Text>;
+  if (info.broken) {
+    return <Text color="red">{renderAuditField(info)}</Text>;
+  }
+  return <Text color="green">{renderAuditField(info)}</Text>;
 }
 
 /**

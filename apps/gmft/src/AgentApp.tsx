@@ -40,6 +40,7 @@ import {
   createModel,
   getDefaultModel,
   readChokepointEnv,
+  readAuditChainHead,
   loadConfig,
   makeAuditSink,
   runInner,
@@ -323,6 +324,23 @@ export function AgentApp({
     supervisor: 'quiet',
     fireCount: 0,
   }));
+
+  // v0.3.C follow-up — read the audit chain head once at mount
+  // and seed it into `status.auditChain` so the StatusRail renders
+  // `audit #N ✓` / `audit #N ✗ broken`. The read is sync (the
+  // reader does a single readFileSync on a small file) so it lives
+  // in a useEffect with an empty dep array — no re-runs, no
+  // polling. The breadcrumb is a static snapshot; live tailing is
+  // the AuditLogTab's job.
+  useEffect(() => {
+    const head = readAuditChainHead();
+    if (head.count === 0 && !head.broken) {
+      // Empty log + not broken → no breadcrumb at all. The rail
+      // skips rendering when `auditChain` is undefined.
+      return;
+    }
+    setStatus((prev) => ({ ...prev, auditChain: head }));
+  }, []);
 
   // v0.3.A.2 — supervisor fires accumulated this session. Each fire
   // carries its own `targetEventId` (the runtime event id the rule
