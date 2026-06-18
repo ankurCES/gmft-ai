@@ -4,6 +4,58 @@ All notable changes to GMFT-AI are documented here.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning: [Semantic](https://semver.org/).
 
+## [0.3.0] — 2026-06-19
+
+**v0.3.0 — Run polish + recon + audit.** Aggregates the
+three v0.3 slices shipped this week. **830 tests green**
+(1 testkit + 231 core + 352 tools + 246 gmft). No breaking
+API changes from v0.2.0; chokepoint semantics unchanged.
+
+The three slices (each has its own entry below for the
+per-PR audit trail):
+
+- **A — Run polish + tool surface:** `--target` +
+  `--resume` + `--report`/`--report-format` CLI flags,
+  supervisor model wiring (`--supervisor-model`), the
+  post-mortem card, attack-chain support
+  (`packages/tools/src/chains/`), the `/tools` and `/run`
+  slash commands, `/report`, Tab completion, and the
+  `report_pdf` tool (react-pdf).
+- **B — Recon expansion:** 13 new tools (7 network + 3 web
+  + 3 wifi), `--scope <file>` for per-line target fan-out,
+  the destructive-warning surface in the StatusRail, and
+  `docker/Dockerfile.{network,web}` bumped to `:0.3` with
+  the new binaries. Catalog grows from 16 → 29 tools.
+- **C — Audit log + CLI:** tamper-evident hash-chained
+  HMAC-signed JSONL audit log under
+  `$XDG_CONFIG_HOME/gmft/audit/`, the
+  `withAuditChokepoint` post-decision decorator, and the
+  `gmft audit {verify,log,tail}` subcommand surface. The
+  TUI wiring of `withAuditChokepoint` (StatusRail breadcrumb
+  + `/audit` slash command) is a deliberate follow-up
+  tracked under ADR-0013 §7.
+
+### Changed
+- **Workspace versions:** all four release-surface
+  packages (`apps/gmft`, `packages/core`,
+  `packages/testkit`, `packages/tools`) bumped
+  `0.1.0 → 0.3.0` in lockstep. The two native shims
+  (`landlock-shim`, `seccomp-shim`) stay at `0.0.1` —
+  they're pre-1.0 native modules not part of the workspace
+  release surface. The root `package.json` stays at
+  `0.1.0` (it's a `private: true` workspace manifest, not
+  a publishable artifact).
+
+### Migration notes
+- No user-visible breaking changes from v0.2.0.
+- Operators upgrading from v0.1.0 should re-read
+  [`docs/safety.md`](docs/safety.md) — the chokepoint
+  still has the same five rules, but the audit log now
+  persists decisions so a hand-edited audit.jsonl is
+  detectable via `gmft audit verify`.
+- The catalog grew 16 → 29 tools; old `/tools` listings in
+  transcripts may show new tools. No action required.
+
 ## [0.3.0-C] — 2026-06-19
 
 **v0.3.C slice — tamper-evident audit log + CLI.** Adds a
