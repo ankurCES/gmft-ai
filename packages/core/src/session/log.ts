@@ -1,6 +1,11 @@
 import { appendFile, readFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import type { SupervisorTurnRecord } from '../agent/supervisor-types.js';
+// v0.4-B — sibling redaction pass for AD-shaped credential material.
+// See packages/core/src/transcript/redact-ad.ts (ADR-0018 §D.5).
+import { redactAdSecrets } from '../transcript/redact-ad.js';
+
+export type { AdRedactedField } from '../transcript/redact-ad.js';
 
 export interface Turn {
   role: 'user' | 'assistant' | 'tool' | 'system';
@@ -69,17 +74,43 @@ export interface Turn {
  * user text or pasted snippets, so they go through the same
  * `redactSecrets` pass.
  *
+ * v0.4-B also runs `redactAdSecrets` (sibling pass, ADR-0018 §D.5) on
+ * the same serialized line. `redactAdSecrets` covers NTLM hashes,
+ * lsass NTHASH lines, kerberoast TGS hashes, and asreproast AS-REP
+ * hashes — all shapes that `secretsdump` / `kerberoast` / `asreproast`
+ * emit to stdout and that an unaudited transcript would otherwise
+ * leak. The function returns the field kinds that were scrubbed so
+ * the caller (audit-event writer) can record
+ * `redacted_fields: string[]` in the audit event payload.
+ *
  * Use {@link appendTurnRaw} to bypass redaction for tests or trusted
  * internal paths.
  */
-export async function appendTurn(path: string, turn: Turn): Promise<void> {
+export async function appendTurn(
+  path: string,
+  turn: Turn,
+): Promise<{ redactedFields: import('../transcript/redact-ad.js').AdRedactedField[] }> {
   // v0.2.A+ always writes schemaVersion: 2 (the supervisor field is
   // optional, but the schema marker is mandatory on new lines so a
   // reader can identify which version produced this line).
   const toWrite: Turn = { schemaVersion: 2, ...turn };
   const line = JSON.stringify(toWrite) + '\n';
+  // Pass 1: general secret shapes (sk-..., Authorization: Bearer,
+  // JSON-shaped apiKey, env-shaped key=value). Established in v0.1.5g.
   const safe = redactSecrets(line);
-  await appendFile(path, safe, 'utf8');
+  // Pass 2: AD-shaped credential material (secretsdump SAM,
+  // lsass NTHASH, kerberoast TGS, asreproast AS-REP). Established
+  // in v0.4-B (ADR-0018 §D.5). Runs on the already-redacted line so
+  // the two passes compose — `redactSecrets` runs first, then
+  // `redactAdSecrets` matches against the (already secret-stripped)
+  // line. The order matters: `redactSecrets` would not match AD
+  // shapes (the hash regexes don't look like API keys), and
+  // `redactAdSecrets` would not match general secret shapes (the
+  // patterns are tuned for hash formats). Both passes are pure
+  // string-level, so composing them is safe.
+  const { redactedText, redactedFields } = redactAdSecrets(safe);
+  await appendFile(path, redactedText, 'utf8');
+  return { redactedFields };
 }
 
 /**

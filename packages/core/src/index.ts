@@ -64,6 +64,11 @@ export { createLlmProviderField } from './llm/llm-provider-field.js';
 export { runOnboarding, type RunOnboardingOpts } from './llm/onboard.js';
 export { appendTurn, readLog, redactSecrets, type Turn } from './session/log.js';
 export {
+  redactAdSecrets,
+  type AdRedactedField,
+  type AdRedactionResult,
+} from './transcript/redact-ad.js';
+export {
   sessionDir,
   sessionPath,
   currentSessionPath,

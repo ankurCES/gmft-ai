@@ -4,6 +4,67 @@ All notable changes to GMFT-AI are documented here.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning: [Semantic](https://semver.org/).
 
+## [0.4.0-B.2] — 2026-06-19
+
+**v0.4.0-B.2 — `redactAdSecrets` post-execution pass.** Adds a
+sibling redaction pass to the existing `redactSecrets` (which
+covers API keys, SSH keys, env-var-shaped secrets). The AD
+pass covers material that lands in the session transcript JSONL
+as a side effect of running the AD attack tools — NTLM hashes,
+lsass NTHASH lines, kerberoast TGS hashes, asreproast AS-REP
+hashes. Per
+[ADR-0018](docs/plans/adr/0018-v0.4-b-ad-attack-gate.md) §D.5.
+**956 tests green** (1 testkit + 304 core + 379 tools + 272 gmft).
+core went 257 → 304 (+47 new tests for B.4: 13 redaction + 18
+AD-scope + 13 DC + 3 chain-order). No breaking API changes.
+
+### Added
+- **`redactAdSecrets(text)`** in
+  `packages/core/src/transcript/redact-ad.ts`. Sibling of
+  `redactSecrets`. Matches the 4 AD-shaped credential patterns
+  documented in ADR-0018 §D.5 (secretsdump SAM with empty-LM
+  sentinel, secretsdump lsass NTHASH, kerberoast TGS, asreproast
+  AS-REP, plus a generic SAM fallback for hosts with LM hashes
+  recorded). Replacement tokens are verbose
+  (`<redacted:ntlm-hash>` rather than `[REDACTED]`) so the
+  operator can tell which shape was scrubbed when reading the
+  log.
+- **`appendTurn` now runs `redactAdSecrets` after `redactSecrets`**
+  on the same serialized log line. Returns
+  `{ redactedFields: AdRedactedField[] }` so the audit-event
+  writer can record `redacted_fields: string[]` in the audit
+  event payload (additive — non-AD events still have an empty
+  array).
+- **Two new test files** in `packages/core/test/`:
+  - `transcript-redact-ad.test.ts` (13 tests) — each of the 5
+    patterns matches the expected impacket output, multi-match
+    dedup, idempotency on `redactedText`, composition with
+    `redactSecrets` in `appendTurn`.
+  - `chokepoint-rules-check-ad-scope.test.ts` (18 tests) — each
+    of the 5 AD tools with `args.scope` or `cliScope: true` is
+    denied; non-AD tools with `--scope` are not blocked; the
+    category gate (not the tool name) is what fires the rule.
+  - `chokepoint-rules-check-dc.test.ts` (13 tests) — DC match
+    against the session's PDC is denied with the canonical
+    reason; realmLookup=false skips the rule entirely; case-
+    insensitive PDC match.
+- **`chokepoint.test.ts` extended with 3 AD-order tests** (in
+  the existing `describe('rule order (...)')` block). Asserts
+  `checkAdScope` runs before `checkElevation`, `checkDomainController`
+  runs before `checkElevation`, and `checkAdScope` runs before
+  `checkDomainController` (the cheaper, more-actionable error
+  wins when both could fire).
+
+### Changed
+- **ADR-0018 §D.5 amendment note:** the `report_pdf` tool in
+  v0.4-B renders `Finding[]`, not transcript turns — there is
+  no `renderTranscript` step in the current code. `redactAdSecrets`
+  is exported from `packages/core/src/transcript/redact-ad.ts`
+  (as the ADR specifies) and is wired into `appendTurn`. The
+  future `renderTranscript` path will import the same function
+  and run it on the in-memory `Turn[]` array, so the PDF output
+  will stay consistent with the on-disk JSONL.
+
 ## [0.4.0-B.1] — 2026-06-19
 
 **v0.4.0-B.1 — AD attack tools + chokepoint rule-order fix.** Ships

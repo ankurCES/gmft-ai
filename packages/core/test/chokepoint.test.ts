@@ -368,6 +368,91 @@ describe('createChokepoint', () => {
       const d = await cp.decide(call({ flags: ['requiresElevation'] }));
       expect(d.kind).toBe('allow');
     });
+
+    // v0.4-B — AD-specific rule order (ADR-0018 §D.4):
+    //   1. checkAdScope            — deny category:'ad' + scope
+    //   2. checkDomainController   — deny realm-lookup match
+    //   3. checkElevation          — (canonical)
+    //   4. checkTypeToConfirm      — (canonical)
+    //   5. checkDestructive        — (canonical)
+    //   6. checkTarget             — (canonical)
+    //
+    // The two AD rules fire first (cheap, category-level). The DC
+    // check fires before checkElevation so the operator sees the
+    // more-informative "PDC match" reason when both apply.
+    it('checkAdScope beats checkElevation: AD tool + scope + elevation denies with scope reason first', async () => {
+      const cp = createChokepoint({
+        ...baseEnv,
+        allowElevation: true,
+      });
+      const d = await cp.decide(call({
+        category: 'ad',
+        tool: 'psexec',
+        flags: ['destructive', 'targetRequired', 'requiresElevation'],
+        args: { target: 'dc01.corp.example.com', scope: ['dc01.corp.example.com'] },
+        typeToConfirm: 'attack',
+      }));
+      expect(d.kind).toBe('deny');
+      if (d.kind === 'deny') {
+        expect(d.reason).toMatch(/one target at a time/);
+        expect(d.reason).not.toMatch(/GMFT_ALLOW_ELEVATION/);
+      }
+    });
+
+    it('checkDomainController beats checkElevation: AD tool vs PDC + elevation denies with DC reason first', async () => {
+      // realmLookup=true + PDC match: the DC rule must fire before
+      // checkElevation so the operator gets the more-informative
+      // "PDC match" reason rather than the generic "needs
+      // GMFT_ALLOW_ELEVATION" reason.
+      const cp = createChokepoint({
+        ...baseEnv,
+        allowElevation: true,
+        realmLookup: true,
+        pdcCache: {
+          async getPdc() {
+            return 'dc01.corp.example.com';
+          },
+        },
+      });
+      const d = await cp.decide(call({
+        category: 'ad',
+        tool: 'psexec',
+        flags: ['destructive', 'targetRequired', 'requiresElevation'],
+        args: { target: 'dc01.corp.example.com' },
+        typeToConfirm: 'attack',
+      }));
+      expect(d.kind).toBe('deny');
+      if (d.kind === 'deny') {
+        expect(d.reason).toMatch(/domain controller/);
+        expect(d.reason).not.toMatch(/GMFT_ALLOW_ELEVATION/);
+      }
+    });
+
+    it('checkAdScope beats checkDomainController: scope + PDC match denies with scope reason first', async () => {
+      // Both AD rules could fire (category: 'ad', scope is set,
+      // AND the target is the PDC). The scope rule fires first so
+      // the operator gets the cheaper, more-actionable error.
+      const cp = createChokepoint({
+        ...baseEnv,
+        realmLookup: true,
+        pdcCache: {
+          async getPdc() {
+            return 'dc01.corp.example.com';
+          },
+        },
+      });
+      const d = await cp.decide(call({
+        category: 'ad',
+        tool: 'psexec',
+        flags: ['destructive', 'targetRequired'],
+        args: { target: 'dc01.corp.example.com', scope: ['dc01.corp.example.com'] },
+        typeToConfirm: 'attack',
+      }));
+      expect(d.kind).toBe('deny');
+      if (d.kind === 'deny') {
+        expect(d.reason).toMatch(/one target at a time/);
+      }
+    });
   });
 });
 
