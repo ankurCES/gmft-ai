@@ -49,7 +49,16 @@ export type ToolCategory =
   | 'search'  // search code/content
   | 'recon'   // network recon (nmap-style, future)
   | 'binary'  // invoke a security tool binary
-  | 'note';   // scratchpad / no side effects
+  | 'note'    // scratchpad / no side effects
+  | 'ad';     // v0.4-B — Active Directory attack tools (psexec, wmiexec,
+              // secretsdump, kerberoast, asreproast). Additive per
+              // ADR-0018 §10.4 — does not replace or rename any
+              // existing category. The chokepoint fires
+              // `checkAdScope` (rejects `--scope`) and
+              // `checkDomainController` (rejects the session's PDC
+              // when `realmLookup === true`) for any tool in this
+              // category. See `safety.md` §10.1 for the full
+              // constraint set.
 
 export const TOOL_CATEGORIES: readonly ToolCategory[] = [
   'shell',
@@ -59,6 +68,7 @@ export const TOOL_CATEGORIES: readonly ToolCategory[] = [
   'recon',
   'binary',
   'note',
+  'ad',
 ];
 
 /**

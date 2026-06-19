@@ -1,0 +1,44 @@
+# v0.4-B — AD attack tools image: impacket (psexec, wmiexec,
+# secretsdump, GetUserSPNs, GetNPUsers).
+#
+# Pinned to alpine:3.20 for reproducibility (matches Dockerfile.network).
+# Impacket is a Python package; we install it via pip with the
+# PEP 668 override (alpine's system python3 is not a virtualenv).
+FROM alpine:3.20
+
+# Install system packages.
+# bash: impacket's CLI scripts assume bash.
+# ca-certificates: impacket needs to verify LDAPS / HTTPS for
+#                  GetUserSPNs against the DC.
+# krb5-libs: impacket depends on python-gssapi which links libkrb5.
+# openssl: impacket's NTLM/auth stack.
+# python3 + py3-pip: impacket itself.
+# samba: impacket-psexec uses libsmbclient for some auth flows.
+RUN apk add --no-cache \
+    bash \
+    ca-certificates \
+    krb5-libs \
+    openssl \
+    python3 \
+    py3-pip \
+    samba \
+    && apk add --no-cache --virtual .build-deps \
+        gcc \
+        krb5-dev \
+        musl-dev \
+        python3-dev \
+        samba-dev \
+    && pip install --no-cache-dir --break-system-packages \
+        impacket==0.12.0 \
+    && apk del .build-deps
+
+WORKDIR /work
+
+# Sanity check at build time — fails the build if any of the 5
+# AD tools is missing. These are the exact argv[0] strings the
+# 5 tools in packages/tools/src/ad/ spawn.
+RUN impacket-psexec -h 2>&1 | head -1 \
+    && impacket-wmiexec -h 2>&1 | head -1 \
+    && impacket-secretsdump -h 2>&1 | head -1 \
+    && impacket-GetUserSPNs -h 2>&1 | head -1 \
+    && impacket-GetNPUsers -h 2>&1 | head -1

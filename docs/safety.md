@@ -363,3 +363,31 @@ rejection behavior are stable. Adding new AD-tool categories
 constraint A, B, or C is a major version bump. Loosening
 constraint D is a major version bump **and** a CVE-worthy
 event — please file a safety bug (§8).
+
+### 10.6 Catalog
+
+v0.4-B ships 5 AD attack tools under `category: 'ad'`. All
+five route through the `gmft/ad:0.1` Docker image (impacket
+installed via `docker/Dockerfile.ad`) and share the
+`destructive` + `targetRequired` flags + `typeToConfirm:
+'attack'` literal:
+
+| Tool | Impacket binary | Auth | Purpose |
+|---|---|---|---|
+| `psexec` | `impacket-psexec` | password / NTLM hash | remote shell via SMB |
+| `wmiexec` | `impacket-wmiexec` | password / NTLM hash | remote shell via WMI |
+| `secretsdump` | `impacket-secretsdump` | password / NTLM hash | dump SAM / NTDS.dit / LSA secrets |
+| `kerberoast` | `impacket-GetUserSPNs` | pre-auth (no password) | enumerate SPNs, request TGS hashes |
+| `asreproast` | `impacket-GetNPUsers` | pre-auth (no password) | enumerate no-preauth accounts, request AS-REP hashes |
+
+The canonical argv shape is `<domain>/<user>:<auth>@<target>`
+(assembled by `buildImpacketTarget` in
+`packages/tools/src/ad/shared.ts`). All 5 tools re-export
+their input/output Zod schemas, argv builders, and (for the
+two roast tools) stdout hash parsers (`parseKerberoastHashes`,
+`parseAsrepHashes`) from the `packages/tools/src/ad/` barrel.
+
+The full per-tool API and chokepoint contract is documented
+in `ADR-0018` §Catalog additions. The redaction pass
+(`redactAdSecrets`) applies to all 5 tools' transcript output
+automatically — see §10.4 above.
