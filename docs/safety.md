@@ -200,3 +200,158 @@ Breaking any of them requires a major version bump. Adding a new
 rule is fine as long as the order of the existing rules is preserved
 (or a migration ADR is filed that explains the reorder and the
 audit-log implications).
+
+## 10. AD-specific threat model (v0.4-B)
+
+**This section is a v0.4-B addition.** It documents the four
+constraints that the AD attack tools (`impacket_gettgt`,
+`impacket_kerberoast`, `impacket_psexec`, `impacket_secretsdump`,
+`evilginx_phishlet_enable`) MUST satisfy before any of them can
+be added to the catalog. It does not relax any constraint from
+§§1–9; it adds to them.
+
+AD attack tooling is the single most dangerous category gmft ships.
+The same machine that can dump NTLM hashes via `secretsdump` can
+also be pointed at the operator's own domain controller and
+enumerate the entire AD forest in one session. The constraints
+below are the boundary between "useful red-team tool" and "audit
+incident."
+
+### 10.1 The four constraints
+
+**Constraint A — same hard gate as the wifi evil-twin (B.1.1).**
+The chokepoint must apply the existing destructive/elevation gate
+to every AD tool call, identically to how it handles `evil_twin`:
+
+| Tool flag | Required at runtime |
+| --- | --- |
+| `requiresElevation: true` | env opt-in `GMFT_ALLOW_ELEVATION=true` (refused without it) |
+| `destructive: true` | y/n confirm prompt in the TUI |
+| `typeToConfirm: 'ATTACK'` | operator must type the literal string `ATTACK` (case-insensitive) into the confirm box before the call proceeds |
+
+This is the same triple the evil-twin uses and is not weakened
+for AD. The reasoning is in [ADR-0018](plans/adr/0018-v0.4-b-ad-attack-gate.md) §Decision.
+
+**Constraint B — no `--scope` fan-out for AD tools (B.1.2).**
+`--scope` (introduced in v0.3.B) lets a single recon call run
+across N hosts in parallel. That is fine for `nmap`, where the
+worst case is "we scanned 50 hosts we shouldn't have." It is
+not fine for AD attack tools, where 50 hosts in parallel = 50
+simultaneous lateral-movement attempts = immediate detection +
+containment by any modern EDR. The chokepoint MUST reject
+`--scope` for any tool whose `category` is `'ad'`. The error
+message is "AD tools must be called one target at a time; --scope
+is not supported for this category."
+
+The catalog is the source of truth: a tool with
+`category: 'ad'` in `packages/tools/src/catalog.ts` is rejected
+at the chokepoint boundary when `--scope` is present. The
+rejection happens **before** elevation/confirmation so the
+operator sees the constraint first.
+
+**Constraint C — domain controller is always blocked (B.1.3).**
+Operators running gmft on a workstation should not be able to
+spray-credential the DC without explicit scope. The chokepoint
+MUST refuse any AD tool call where `args.target` (or any value
+bound to the `target` argument) matches the session machine's
+own domain controller.
+
+Resolution of "the DC" is opt-in via `GMFT_REALM_LOOKUP=true`
+(the default is to block all AD calls, which is the safe
+default). When opted in, the chokepoint shells out to
+`realm list --name-only` (preferred) or `klist -l principal
+| awk '{print $3}'` (fallback) to determine the realm's PDC
+emulator FQDN, then compares it case-insensitively to
+`args.target`. A match rejects the call with the canonical
+reason "target matches the session's domain controller; this
+is blocked by default for AD tools."
+
+The opt-in exists because `realm list` requires a working
+Kerberos configuration on the host, which most workstations
+do not have. The chokepoint should not silently break AD
+tools on hosts without `realm`; it should break them loudly
+with a clear remediation hint.
+
+**Constraint D — credential exposure in transcript (B.1.4).**
+`impacket_secretsdump` outputs NTLM hashes in the form
+`sam-account-name:RID:lmhash:nthash:::`. The session transcript
+(`~/.local/share/gmft/sessions/<id>/transcript.jsonl`), the
+audit log, and the PDF/JSON reports MUST redact these patterns
+at write time. This is the AD-specific equivalent of the
+v0.1.5g `redactSecrets` pass: same plumbing, tuned regex.
+
+The `redactAdSecrets` function (added in v0.4-B.5) lives in
+`packages/core/src/transcript/redact-ad.ts` and runs as part
+of the existing `redactSecrets` pipeline. It matches:
+
+- `secretsdump` SAM line: `\b[\w.-]+:[0-9]+:aad3b435b51404eeaad3b435b51404ee:[0-9a-f]{32}:::` → replaced with `<redacted:ntlm-hash>`
+- `secretsdump` NT line: `\\[\w.-]+:NTHASH:[0-9a-f]{32}` (lsass / NTDS-way) → `<redacted:lsass-nthash>`
+- `kerberoast` TGS lines: `$krb5tgs$23$*<principal>$<realm>$<spn>*$<...>` → `<redacted:kerberos-tgs>`
+- Generic `user:rid:lmhash:nthash:::` form: same NTLM-hash treatment
+
+The redaction happens **after** the tool subprocess returns,
+in the same write loop that already runs `redactSecrets`. The
+audit log entry gets a `redacted_fields: string[]` summary so
+operators can see *that* redaction happened without seeing the
+hash itself.
+
+### 10.2 Threat matrix
+
+| Threat | Constraint that mitigates | Residual risk |
+| --- | --- | --- |
+| LLM escalates and runs `secretsdump` against a real DC | A + C | Mitigated: requires `GMFT_ALLOW_ELEVATION` + `ATTACK` literal + DC not blocked. |
+| LLM fans out across 50 hosts in parallel | B | Mitigated: `--scope` rejected for `category: 'ad'`. |
+| LLM dumps hashes that end up in the transcript PDF | D | Mitigated: `redactAdSecrets` runs at write time. |
+| Operator uses gmft from a domain-joined laptop, AD tools silently break | (C, opt-in failure mode) | Not mitigated — see §10.3 hardening #2. |
+| Hashes leaked via a side channel (e.g. `report_pdf` rendering an unredacted transcript) | (D, application-level) | Mitigated if `report_pdf` runs the same `redactAdSecrets` pass on the in-memory transcript; see §10.3 hardening #3. |
+| LLM uses a non-AD lateral-movement path (e.g. SSH brute-force) | (out of scope) | Not in scope for this section — covered by §§1–9. |
+
+### 10.3 Operator hardening checklist (additions to §7)
+
+1. **Set `GMFT_ALLOW_ELEVATION=true` deliberately.** Don't set it
+   in your shell profile; set it per-session or via a wrapper
+   that asks for confirmation. The chokepoint refuses AD tools
+   without it.
+2. **Set `GMFT_REALM_LOOKUP=true` on the host you want AD
+   tools to work on, AFTER verifying `realm list` returns the
+   expected realm.** A misconfigured realm lookup will silently
+   over-block; an honest "broken" error is safer.
+3. **When reviewing an AD-tool report, search for
+   `<redacted:ntlm-hash>`.** Its presence means a real
+   `secretsdump` ran. A report with zero redactions and
+   successful AD tool invocations is a bug — the redaction
+   pipeline failed.
+4. **Do not commit the session directory to git.** The
+   redaction is on the *written* transcript; the raw
+   subprocess output is on disk until the rotation job
+   (`gmft session rotate`) runs.
+
+### 10.4 What this section does NOT change
+
+- It does not change the `category: 'wifi'` / `category: 'web'`
+  / `category: 'binary'` rules from §§1–9.
+- It does not introduce a new `category` — the AD tools go in
+  `category: 'ad'`, which is brand new in v0.4-B and is
+  **additive** (does not replace or rename any existing
+  category).
+- It does not change the audit-log wire format from
+  v0.4.0-A.1; the only addition is the optional
+  `redacted_fields: string[]` field on entries that triggered
+  `redactAdSecrets`.
+- It does not change the operator-sock protocol or the
+  chokepoint's rule order (§9). The new checks (B and C) run
+  **after** `checkDestructive` and `checkElevation`, in this
+  order: `checkDestructive` → `checkElevation` →
+  `checkAdScope` → `checkDomainController` → `confirm` →
+  `redactAdSecrets` (post-execution). The reordering is
+  documented in [ADR-0018](plans/adr/0018-v0.4-b-ad-attack-gate.md).
+
+### 10.5 Versioning
+
+This section is part of gmft's public contract from v0.4-B
+onward. The four constraints and the `category: 'ad'`
+rejection behavior are stable. Adding new AD-tool categories
+(e.g. `category: 'ad-cred'`) requires an ADR. Loosening
+constraint A, B, or C is a major version bump. Loosening
+constraint D is a major version bump **and** a CVE-worthy
+event — please file a safety bug (§8).
