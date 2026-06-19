@@ -72,6 +72,222 @@ changes; chokepoint semantics unchanged.
   `AgentApp` (no `targetRequired` tools in the registry). See
   ADR-0014 §Open follow-ups for the v0.4-A.x plan.
 
+
+## [0.4.0-A.2] — 2026-06-19
+
+**v0.4.0-A.2 — LLM judge for plan quality.** Adds an LLM-as-judge
+path for Rule C (plan-issue) so the supervisor can produce
+higher-quality advice than a hard-coded string lookup. The judge's
+verdict is `'sufficient' | 'insufficient' | 'unclear'` and is
+backed by a 10s timeout — a timeout is treated as `'sufficient'`
+(never throws) so the supervisor's hot path is never blocked by
+the judge. No breaking API changes from A.1.
+
+### Added
+- **`judgePlanQuality(plan, opts)`** in
+  `packages/core/src/agent/supervisor-judge.ts`. Calls the
+  supervisor's `modelId` (the `--supervisor-model` override, or
+  the primary model as fallback) with a fixed 3-line judge prompt
+  ("Is this plan sufficient to answer the user's request? Reply
+  only with one of: sufficient / insufficient / unclear."). Returns
+  `'sufficient' | 'insufficient' | 'unclear'`. Wrapped in
+  `Promise.race` against a 10s `setTimeout`; the timeout branch
+  returns `'sufficient'` so the caller never sees a hang. Never
+  throws — a thrown LLM call is caught and returns `'unclear'`.
+- **`PlanIssueFire.judgeVerdict?: 'sufficient' | 'insufficient' | 'unclear'`.**
+  Audit-log readers and the TUI surface can show the judge's call
+  alongside the rule's hard-coded advice so an operator can tell
+  whether the rule fired because the model said "insufficient" or
+  because the model was silent / timed out.
+- **`supervisor-judge.test.ts`** (6 tests): the three verdicts
+  parse correctly, the 10s timeout returns 'sufficient' without
+  throwing, an LLM throw returns 'unclear' without bubbling, and
+  the `judgeVerdict` field lands on `PlanIssueFire` when the
+  supervisor uses the new path.
+
+### Changed
+- **Rule C integration.** `withSupervisor` now calls
+  `judgePlanQuality` on every plan-issuable event before yielding
+  the `PlanIssueFire`. The hard-coded advice text is replaced
+  with the judge's verdict + a one-line summary. A `'sufficient'`
+  verdict short-circuits the fire entirely (no `PlanIssueFire`
+  yielded, the rule is a no-op). A `'unclear'` verdict falls
+  back to the hard-coded advice. This keeps A.1's behavior
+  observable when the LLM is silent or unavailable.
+- **`SupervisorTurnRecordSchema`** gains an optional
+  `judgeVerdict` field for audit-log compat. v0.4.0-A.1 logs
+  parse unchanged (the field is `undefined` and the schema is
+  additive).
+
+### Documented
+- **[ADR-0015](docs/plans/adr/0015-v0.4-a-supervisor-judge.md).**
+  The design record. Documents why the judge is gated on the
+  supervisor model (not the primary), why a 10s timeout is
+  treated as `'sufficient'` (fail-open in the hot path, fail-loud
+  in the audit log), and why the judge's verdict is recorded on
+  the fire shape rather than as a separate event (the audit-log
+  hash chain needs the rule-engine's emission to be atomic with
+  the judge's verdict for the entry to be self-verifying).
+
+### Migration notes
+- No user-visible breaking changes from A.1.
+- Sessions that don't pass `--supervisor-model` use the primary
+  model for the judge call. Operators who set the flag for the
+  A.3 postmortem will see the same model used for plan-quality
+  judging (this is the documented behavior).
+- The 10s judge timeout is on the `setTimeout`, not the LLM call
+  itself. A hung HTTP request will still hold a connection for
+  the upstream provider's own timeout (typically 30-60s); the
+  judge wraps the call so the *supervisor's* hot path returns
+  in 10s, not the call's transport-level timeout.
+
+## [0.4.0-A.3] — 2026-06-19
+
+**v0.4.0-A.3 — Supervisor fires land in the audit log.** Adds a
+new audit event kind `supervisor-fire` and a new
+`withAuditSupervisor` decorator that mirrors `withAuditChokepoint`
+at the iterable layer. The audit chain now covers supervisor
+decisions alongside chokepoint decisions, so an attacker who
+compromises the session log can't hide supervisor fires from a
+post-session review. No breaking API changes from A.2.
+
+### Added
+- **`AuditEventKind.supervisor-fire`.** New 8th event kind (the
+  7 from v0.3-C were: `session-start`, `session-end`, `tool-call`,
+  `tool-result`, `chokepoint-decision`, `runner-mode`, `onboard`).
+  The audit CLI's `gmft audit log --kind supervisor-fire` filter
+  now works for supervisor fires.
+- **`withAuditSupervisor(inner, sink)`** in
+  `packages/core/src/audit/instrument.ts`. Mirrors
+  `withAuditChokepoint` at the iterable layer: wraps the
+  `AsyncIterable<AgentEvent>` returned by `withSupervisor`,
+  watches each yielded event for `type === 'supervisor-fire'`,
+  and fires `sink.append('supervisor-fire', payload)`
+  fire-and-forget. The inner iterable is unchanged
+  (transformation-only, like the chokepoint wrapper).
+- **`audit-supervisor.test.ts`** (3 tests): sink called with
+  every supervisor fire, fire-and-forget semantics preserve
+  event order, payload shape carries the fire's variant-specific
+  fields (`tool` + `count` + `recent` for `loop-detected`, `quote`
+  + `evidence` for `overclaim`, `severity` + `text` for
+  `plan-issue`, `tool` + `firstToolOfTurn: true` for
+  `risk-escalation`).
+
+### Changed
+- **`packages/core/src/audit/types.ts`** — `AuditEventKind` union
+  widens to include `'supervisor-fire'`. The v0.3-C schema parser
+  accepts the new kind; older audit readers ignore it gracefully.
+- **`packages/core/src/index.ts`** — re-exports `withAuditSupervisor`
+  so `AgentApp` can import it with one line.
+- **Audit log volume.** Each supervisor fire now produces one
+  audit row. Fires are rare in practice (rule-engine only fires
+  on violations) so the volume increase is small. The chain HMAC
+  is unchanged.
+
+### Documented
+- **[ADR-0016](docs/plans/adr/0016-v0.4-a-supervisor-audit.md).**
+  The design record. Documents why the audit decorator is at the
+  iterable layer (the supervisor is a transform over
+  `AsyncIterable<AgentEvent>`, not an object with a `decide`
+  method like the chokepoint), why the fire-and-forget pattern
+  matches `withAuditChokepoint` (the agent loop yields
+  `tool-call-request` synchronously off `runTurn`'s output, and
+  blocking on the audit append would couple supervisor-fire
+  latency to tool-call latency), and why the payload shape
+  spreads the fire first then explicitly sets the truly common
+  fields (variant-specific fields land at the top level).
+
+### Migration notes
+- No user-visible breaking changes from A.2.
+- `gmft audit verify` continues to work on logs that predate A.3
+  (the chain is forward-compatible — the parser accepts the new
+  kind but doesn't require it).
+- `gmft audit log` users can now add `--kind supervisor-fire` to
+  filter for supervisor fires. Without the flag, the log output
+  is unchanged (all kinds shown).
+
+## [0.4.0-A.4] — 2026-06-19
+
+**v0.4.0-A.4 — `/supervisor` slash command + tab-completion.**
+Adds a `/supervisor` slash command that surfaces the supervisor's
+`lastFires()` + `lastPostmortem()` for the most recent turn, with
+three subcommands: default (both), `fires`, and `postmortem`. Also
+adds `/supervisor` (and the pre-existing-but-omitted `/audit`) to
+tab-completion. **882 tests green** (1 testkit + 257 core + 352
+tools + 272 gmft). No breaking API changes from A.3.
+
+### Added
+- **`handleSupervisor` dispatcher branch** in
+  `apps/gmft/src/session/commands.ts`. Reads
+  `getSupervisorSnapshot()` from `SlashContext`, formats the
+  snapshot via `formatSupervisorSnapshot`, and returns a `Msg`
+  with the rendered text. Three subcommands:
+  - `/supervisor` (default) — both fires + postmortem
+  - `/supervisor fires` — fires list only
+  - `/supervisor postmortem` — postmortem prose only
+- **`SupervisorSnapshot` type + `getSupervisorSnapshot` callback**
+  in `SlashContext`. The callback is wired into `AgentApp` via
+  the new `wrappedSupervisorRef` (stores the wrapper after each
+  turn so the slash-command ctx can read `lastFires()` /
+  `lastPostmortem()` without re-running the turn).
+- **`formatSupervisorSnapshot(snapshot)`** — pure formatter
+  function. Layout: "Last turn: N fire(s)" + Fires list +
+  "Postmortem (model: <modelUsed>):" + indented body. Suppresses
+  the fires header when `fires=[]` AND a postmortem is present
+  (so the postmortem-only subcommand renders only the prose).
+  Surfaces `postmortemError` as `(postmortem generation failed:
+  <error>)` so operators see *why* the prose didn't generate
+  (LLM timeout, model 503, etc.). Exported for unit-testing
+  and for reuse by any future `gmft supervisor` CLI subcommand.
+- **`/supervisor` + `/audit` tab-completion.** Added both to
+  `SLASH_COMMANDS` in `apps/gmft/src/session/tab-completion.ts`.
+  `/supervisor` is new; `/audit` was a pre-existing omission
+  caught during A.4 review.
+- **`slash-commands.test.ts`** (7 new tests): all 3 subcommands
+  render the right view, the not-wired case (no callback) returns
+  the right reply, the no-snapshot-yet case (no turn completed)
+  returns the right reply, the quiet-turn case (no fires, no
+  postmortem) renders the right "quiet" line, and the
+  postmortem-only subcommand suppresses the fires header.
+
+### Changed
+- **`apps/gmft/src/AgentApp.tsx`** — new `wrappedSupervisorRef`
+  to expose the wrapper outside the submit closure, new
+  `getSupervisorSnapshot` callback wired into `SlashContext`,
+  imports for `SupervisorWrapper` + `SupervisorSnapshot`.
+- **`apps/gmft/src/ui/components/SupervisorFireMarker.tsx`** —
+  narrowed `severity` access for the `RiskEscalationFire` variant
+  (A.1's `risk-escalation` union variant exposed a latent bug
+  where the marker assumed `f.severity` was always present; now
+  the marker uses the same `'severity' in f` narrowing pattern
+  the formatter uses).
+
+### Documented
+- **[ADR-0017](docs/plans/adr/0017-v0.4-a-supervisor-cli.md).**
+  The design record. Documents why a `useRef` (not a callback
+  closure) is the right seam for the snapshot accessor, why a
+  pure formatter (not a React component) is the right shape for
+  the renderer, why the postmortem-only subcommand passes
+  `fires: []` (the formatter's layout rules skip the fires
+  header when `fires=[]` AND a postmortem is present, so the
+  dispatcher doesn't need a "suppress fires header" flag), and
+  why `postmortemError` is surfaced as a distinct line (operators
+  should see *why* the prose didn't generate, not just an empty
+  section).
+
+### Migration notes
+- No user-visible breaking changes from A.3.
+- Operators can now use `/supervisor` from the chat pane to
+  inspect supervisor state for the most recent turn. The
+  existing on-disk session log is unchanged; the slash command
+  is purely a read-only in-memory accessor.
+- The 3 supervisor states are now reachable from the chat:
+  `/supervisor` for the post-mortem review of a turn,
+  `/supervisor fires` for a quick "what fired?" check, and
+  `/supervisor postmortem` for just the LLM's reasoning. Tab
+  completion now lists `/supervisor` and `/audit` alongside
+  the existing commands.
+
 ## [0.3.0] — 2026-06-19
 
 **v0.3.0 — Run polish + recon + audit.** Aggregates the
