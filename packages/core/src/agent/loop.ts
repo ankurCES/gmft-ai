@@ -391,13 +391,19 @@ export async function* runTurn(opts: RunTurnOpts): AsyncIterable<AgentEvent> {
 
         // Find the tool to get its category + flags for the chokepoint call.
         const tool = opts.tools?.find((t) => t.name === toolName);
-        const decision: Decision = (() => {
+        // v0.4-B — `chokepoint.decide()` is now async (the DC check
+        // may shell out to `realm list`). Compute the decision with
+        // an explicit `await` rather than an IIFE so the type
+        // narrows from Promise<Decision> to Decision before the
+        // downstream switch.
+        const decision: Decision = await (async (): Promise<Decision> => {
           if (!tool) {
             // Unknown tool — chokepoint denies by definition.
             return { kind: 'deny', reason: `unknown tool "${toolName}"` } as const;
           }
-          // Zod-validate args (the SDK will re-validate; we do it here
-          // for the chokepoint so it sees typed args, not `unknown`).
+          // Zod-validate args (the SDK will re-validate; we do it
+          // here for the chokepoint so it sees typed args, not
+          // `unknown`).
           let parsedArgs: Record<string, unknown>;
           try {
             parsedArgs = tool.input.parse(args) as Record<string, unknown>;
@@ -414,7 +420,7 @@ export async function* runTurn(opts: RunTurnOpts): AsyncIterable<AgentEvent> {
             args: parsedArgs,
             typeToConfirm: tool.typeToConfirm,
           };
-          return opts.chokepoint!.decide(chokepointCall);
+          return await opts.chokepoint!.decide(chokepointCall);
         })();
 
         // Always emit the request event (so the TUI shows the LLM's intent).

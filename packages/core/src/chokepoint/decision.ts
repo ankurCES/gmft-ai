@@ -56,6 +56,14 @@ export interface ChokepointCall {
    * returns `type-then-confirm` instead of `confirm`.
    */
   typeToConfirm?: string;
+  /**
+   * v0.4-B — true iff the CLI was invoked with `--scope`. The
+   * chokepoint's `checkAdScope` rule denies AD tool calls when
+   * this is set. CLI-level flag (not a per-tool `args` field)
+   * because the operator typed it on the command line, not in
+   * the tool-call input.
+   */
+  cliScope?: boolean;
 }
 
 export interface ChokepointEnv {
@@ -82,6 +90,35 @@ export interface ChokepointEnv {
    */
   allowlist: readonly string[];
   /**
+   * v0.4-B — per-session PDC (Primary Domain Controller) cache for
+   * the realm-aware DC check (`checkDomainController`). The cache
+   * is populated lazily on the first AD tool call when
+   * `realmLookup === true`; subsequent calls hit the cache.
+   *
+   * `getPdc()` returns:
+   *   - the PDC FQDN (e.g. `'dc01.corp.example.com'`) — match
+   *   - `''` (empty string) — `realm list` ran but found no
+   *     realm / no PDC. All AD tool calls are denied.
+   *   - `null` — `realm list` not yet run (lazy) OR
+   *     `realmLookup === false` (cache disabled).
+   *
+   * The cache is per-session because `realm list` shells out
+   * to `realm` which reads `/etc/krb5.conf` and may talk to AD
+   * LDAP. Calling it on every tool call is too expensive; once
+   * per session is the right granularity.
+   *
+   * See ADR-0018 §D.3.
+   */
+  pdcCache: PdcCache;
+  /**
+   * v0.4-B — true iff `process.env.GMFT_REALM_LOOKUP === 'true'`.
+   * When false, `checkDomainController` short-circuits and the
+   * DC check is skipped entirely. Default is false to preserve
+   * the "fail safe" property: tools work, but with no DC
+   * protection. Opt in deliberately.
+   */
+  realmLookup: boolean;
+  /**
    * The session-level target (from `--target <host>` on the CLI, or
    * set later by the operator). When present, any `targetRequired`
    * call whose `args.target` does not match is denied with a
@@ -99,6 +136,33 @@ export interface ChokepointEnv {
   allowUnsandboxedDestructive: boolean;
 }
 
+/**
+ * v0.4-B — per-session PDC cache. Implemented as a thin interface
+ * so the chokepoint rule can be tested with an in-memory fake
+ * (no shelling out to `realm` in unit tests).
+ */
+export interface PdcCache {
+  /**
+   * Returns the cached PDC FQDN, populating it on first call.
+   * Concurrent calls must coalesce: only one `realm list` may run
+   * at a time. The simplest correct implementation uses a
+   * per-cache `Promise` cached in a closure.
+   *
+   * Returns:
+   *   - `string` (non-empty) — the PDC FQDN
+   *   - `''` (empty string) — no PDC (realm empty / not joined)
+   *   - `null` — cache disabled (realmLookup === false)
+   */
+  getPdc(): Promise<string | null>;
+}
+
 export interface Chokepoint {
-  decide(call: ChokepointCall): Decision;
+  /**
+   * v0.4-B — `decide()` is now `async` because
+   * `checkDomainController` may need to shell out to `realm list`
+   * (cached per-session, so the cost is paid at most once).
+   * Pre-v0.4-B callers that did `chokepoint.decide(call)` must
+   * now `await chokepoint.decide(call)`.
+   */
+  decide(call: ChokepointCall): Promise<Decision>;
 }

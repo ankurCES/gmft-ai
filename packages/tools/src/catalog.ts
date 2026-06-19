@@ -26,6 +26,13 @@ import { aircrackTool } from './wifi/aircrack.js';
 import { kismetTool } from './wifi/kismet.js';
 import { reportWriteTool } from './reports/write.js';
 import { reportPdfTool } from './reports/pdf.js';
+import {
+  psexecTool,
+  wmiexecTool,
+  secretsdumpTool,
+  kerberoastTool,
+  asreproastTool,
+} from './ad/index.js';
 import type { z } from 'zod';
 
 /**
@@ -213,6 +220,44 @@ export const tools: Array<{
     flags: reportPdfTool.flags,
     description: reportPdfTool.description,
   },
+  // v0.4-B — 5 AD attack tools. Each is `category: 'ad'`
+  // (additive per ADR-0018 §10.4) with `destructive` +
+  // `targetRequired` flags and `typeToConfirm: 'attack'` so
+  // the chokepoint's `checkTypeToConfirm` returns
+  // `type-then-confirm` (user must type the literal "attack"
+  // before the run fires). See `safety.md` §10.1 for the
+  // full constraint set; `Dockerfile.ad` for the impacket
+  // image used by all 5 tools.
+  {
+    name: psexecTool.name,
+    category: psexecTool.category,
+    flags: psexecTool.flags,
+    description: psexecTool.description,
+  },
+  {
+    name: wmiexecTool.name,
+    category: wmiexecTool.category,
+    flags: wmiexecTool.flags,
+    description: wmiexecTool.description,
+  },
+  {
+    name: secretsdumpTool.name,
+    category: secretsdumpTool.category,
+    flags: secretsdumpTool.flags,
+    description: secretsdumpTool.description,
+  },
+  {
+    name: kerberoastTool.name,
+    category: kerberoastTool.category,
+    flags: kerberoastTool.flags,
+    description: kerberoastTool.description,
+  },
+  {
+    name: asreproastTool.name,
+    category: asreproastTool.category,
+    flags: asreproastTool.flags,
+    description: asreproastTool.description,
+  },
 ];
 
 export { shellExecTool };
@@ -250,4 +295,14 @@ export {
 export { reportWriteTool } from './reports/write.js';
 export { reportPdfTool, renderPdfBuffer, ReportPdfInput, ReportPdfOutput, type ReportPdfInputT, type ReportPdfOutputT, type PdfReportMeta } from './reports/pdf.js';
 export { readSelections, writeSelections } from './reports/selections.js';
+// v0.4-B — AD attack tools (category: 'ad'). See ADR-0018 §10.1
+// for the chokepoint constraint set and `Dockerfile.ad` for the
+// impacket image used by all 5 tools.
+export {
+  psexecTool,
+  wmiexecTool,
+  secretsdumpTool,
+  kerberoastTool,
+  asreproastTool,
+} from './ad/index.js';
 export type { z };

@@ -22,6 +22,11 @@ export * from './network/index.js';
 // rather than the catalog projection.
 export * from './web/index.js';
 export * from './wifi/index.js';
+// v0.4-B — surface the AD attack tools barrel. All 5 tools
+// (psexec, wmiexec, secretsdump, kerberoast, asreproast) share
+// `category: 'ad'` and route through the `gmft/ad:0.1` impacket
+// image. See ADR-0018 §10.1 for the chokepoint constraint set.
+export * from './ad/index.js';
 export * from './reports/selections.js';
 export {
   defaultReportPath,
@@ -38,4 +43,4 @@ export {
   type PdfRenderer,
 } from './reports/pdf.js';
 export { FindingsStore, type FindingsStoreOpts, type Finding, type Severity, FindingSchema, SeveritySchema } from '@gmft/core';
-export { tools, shellExecTool, nmapTool, dnsenumTool, theHarvesterTool, whatwebTool, reportWriteTool, reportPdfTool } from './catalog.js';
+export { tools, shellExecTool, nmapTool, dnsenumTool, theHarvesterTool, whatwebTool, reportWriteTool, reportPdfTool, psexecTool, wmiexecTool, secretsdumpTool, kerberoastTool, asreproastTool } from './catalog.js';

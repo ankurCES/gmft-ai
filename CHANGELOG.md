@@ -4,6 +4,135 @@ All notable changes to GMFT-AI are documented here.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning: [Semantic](https://semver.org/).
 
+## [0.4.0-B.2] — 2026-06-19
+
+**v0.4.0-B.2 — `redactAdSecrets` post-execution pass.** Adds a
+sibling redaction pass to the existing `redactSecrets` (which
+covers API keys, SSH keys, env-var-shaped secrets). The AD
+pass covers material that lands in the session transcript JSONL
+as a side effect of running the AD attack tools — NTLM hashes,
+lsass NTHASH lines, kerberoast TGS hashes, asreproast AS-REP
+hashes. Per
+[ADR-0018](docs/plans/adr/0018-v0.4-b-ad-attack-gate.md) §D.5.
+**956 tests green** (1 testkit + 304 core + 379 tools + 272 gmft).
+core went 257 → 304 (+47 new tests for B.4: 13 redaction + 18
+AD-scope + 13 DC + 3 chain-order). No breaking API changes.
+
+### Added
+- **`redactAdSecrets(text)`** in
+  `packages/core/src/transcript/redact-ad.ts`. Sibling of
+  `redactSecrets`. Matches the 4 AD-shaped credential patterns
+  documented in ADR-0018 §D.5 (secretsdump SAM with empty-LM
+  sentinel, secretsdump lsass NTHASH, kerberoast TGS, asreproast
+  AS-REP, plus a generic SAM fallback for hosts with LM hashes
+  recorded). Replacement tokens are verbose
+  (`<redacted:ntlm-hash>` rather than `[REDACTED]`) so the
+  operator can tell which shape was scrubbed when reading the
+  log.
+- **`appendTurn` now runs `redactAdSecrets` after `redactSecrets`**
+  on the same serialized log line. Returns
+  `{ redactedFields: AdRedactedField[] }` so the audit-event
+  writer can record `redacted_fields: string[]` in the audit
+  event payload (additive — non-AD events still have an empty
+  array).
+- **Two new test files** in `packages/core/test/`:
+  - `transcript-redact-ad.test.ts` (13 tests) — each of the 5
+    patterns matches the expected impacket output, multi-match
+    dedup, idempotency on `redactedText`, composition with
+    `redactSecrets` in `appendTurn`.
+  - `chokepoint-rules-check-ad-scope.test.ts` (18 tests) — each
+    of the 5 AD tools with `args.scope` or `cliScope: true` is
+    denied; non-AD tools with `--scope` are not blocked; the
+    category gate (not the tool name) is what fires the rule.
+  - `chokepoint-rules-check-dc.test.ts` (13 tests) — DC match
+    against the session's PDC is denied with the canonical
+    reason; realmLookup=false skips the rule entirely; case-
+    insensitive PDC match.
+- **`chokepoint.test.ts` extended with 3 AD-order tests** (in
+  the existing `describe('rule order (...)')` block). Asserts
+  `checkAdScope` runs before `checkElevation`, `checkDomainController`
+  runs before `checkElevation`, and `checkAdScope` runs before
+  `checkDomainController` (the cheaper, more-actionable error
+  wins when both could fire).
+
+### Changed
+- **ADR-0018 §D.5 amendment note:** the `report_pdf` tool in
+  v0.4-B renders `Finding[]`, not transcript turns — there is
+  no `renderTranscript` step in the current code. `redactAdSecrets`
+  is exported from `packages/core/src/transcript/redact-ad.ts`
+  (as the ADR specifies) and is wired into `appendTurn`. The
+  future `renderTranscript` path will import the same function
+  and run it on the in-memory `Turn[]` array, so the PDF output
+  will stay consistent with the on-disk JSONL.
+
+## [0.4.0-B.1] — 2026-06-19
+
+**v0.4.0-B.1 — AD attack tools + chokepoint rule-order fix.** Ships
+the first 5 AD attack tools under the new `category: 'ad'`, the
+canonical chokepoint rule-order contract documented in
+[ADR-0018](docs/plans/adr/0018-v0.4-b-ad-attack-gate.md) §D.4,
+and the runtime plumbing for the `realm`-aware domain-controller
+check. **909 tests green** (1 testkit + 257 core + 379 tools + 272
+gmft). No breaking API changes for the existing 30 tools.
+
+### Added
+- **5 AD attack tools** (`category: 'ad'`, all 5 share
+  `destructive` + `targetRequired` flags + `typeToConfirm: 'attack'`):
+  - `psexec` — `impacket-psexec` remote shell via SMB
+  - `wmiexec` — `impacket-wmiexec` remote shell via WMI
+  - `secretsdump` — `impacket-secretsdump` SAM/NTDS.dit/LSA dump
+  - `kerberoast` — `impacket-GetUserSPNs` TGS request in hashcat format
+  - `asreproast` — `impacket-GetNPUsers` AS-REP request in hashcat format
+  All 5 route through the new `gmft/ad:0.1` Docker image (impacket
+  0.12.0, alpine:3.20). See [`docker/Dockerfile.ad`](docker/Dockerfile.ad).
+- **New `ToolCategory` enum value: `'ad'`.** Additive per
+  ADR-0018 §10.4 — does not replace or rename any existing
+  category. The chokepoint's `checkAdScope` rule rejects AD tool
+  calls when `--scope` is set; `checkDomainController` blocks the
+  session's PDC when `GMFT_REALM_LOOKUP=true`.
+- **`checkAdScope` rule.** `packages/core/src/chokepoint/rules.ts`
+  denies any `category: 'ad'` call that has `args.scope` set OR
+  was invoked with `--scope` on the CLI (carried in
+  `call.cliScope`). Runs first in the chokepoint chain so the
+  operator sees the category-level constraint before any baseline
+  check.
+- **`checkDomainController` rule.** When `GMFT_REALM_LOOKUP=true`,
+  the chokepoint shells out to `realm list --name-only` (cached
+  per-session via `PdcCache`) and rejects AD tool calls targeting
+  the session's PDC. Opt-in because `realm list` requires a
+  working Kerberos configuration that most workstations lack.
+  Test seam: `GMFT_PDC_OVERRIDE` env var, or a fake `PdcCache`
+  injected into `readChokepointEnv({ pdcCacheFactory })`.
+- **`buildImpacketTarget` shared argv builder** in
+  `packages/tools/src/ad/shared.ts`. All 5 tools share the
+  canonical `<domain>/<user>:<auth>@<target>` shape so the
+  chokepoint's `checkTarget` rule has one consistent shape to
+  match on.
+
+### Changed
+- **Chokepoint aggregator rule order.** The pre-v0.4-B aggregator
+  ran `checkTarget` first, breaking the canonical contract
+  documented in [`rules.ts`](packages/core/src/chokepoint/rules.ts)
+  (elevation → destructive → typeToConfirm → target → allow) and
+  locked in by `chokepoint.test.ts` describe('rule order (...)').
+  The new order is `checkAdScope` → `checkDomainController` →
+  `checkElevation` → `checkTypeToConfirm` → `checkDestructive` →
+  `checkTarget` → `checkRequiresSandbox` → allow. The two AD-category
+  rules fire first so the operator sees category-level constraints
+  before any baseline check; the four baseline rules keep their
+  canonical order.
+- **Tests for `chokepoint.decide()` were updated** to handle its
+  new async signature (the `realm list` shell-out made the chain
+  async). 22 test files in `packages/core/test/` +
+  `apps/gmft/test/` updated; all 882 → 909 tests still green.
+
+### Planned for later v0.4-B.x slices
+- **`redactAdSecrets` post-execution pass** (ADR-0018 §D.5) — masks
+  NTLM hashes + Kerberos ticket material in the session transcript.
+- **CLI `--dc-ip` flag wiring** in `apps/gmft/src/cli.tsx`.
+- **TUI surface** for the AD tools (slash command + tab in
+  the gmft app).
+
 ## [0.4.0-A.1] — 2026-06-19
 
 **v0.4.0-A.1 — Supervisor Rule E (risk-escalation).** First slice

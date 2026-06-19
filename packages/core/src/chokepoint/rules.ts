@@ -157,3 +157,106 @@ export function checkTypeToConfirm(call: ChokepointCall): Decision | null {
     prompt: call.typeToConfirm,
   };
 }
+
+/**
+ * v0.4-B — Constraint B: AD tools must be called one target at a
+ * time. `--scope` (v0.3.B) is fine for recon (nmap against 50
+ * hosts is OK) but for AD attack tools, 50 hosts in parallel =
+ * 50 simultaneous lateral-movement attempts = immediate
+ * detection + containment.
+ *
+ * The check fires only when:
+ *   - `call.category === 'ad'` (the catalog is the source of
+ *     truth for the category; the chokepoint never has its own
+ *     list of "AD tool names")
+ *   - AND `call.args.scope` is set (per-call allowlist) OR the
+ *     CLI passed `--scope` (carried in `call.cliScope`)
+ *
+ * The denial is a canonical-reason string so the TUI, CLI,
+ * and audit log all show the same text. Runs BEFORE
+ * `checkElevation` so the operator sees the category-level
+ * constraint first (avoids burning a `checkElevation`
+ * rejection on a call that would have been rejected here).
+ *
+ * See ADR-0018 §D.2 and `safety.md` §10.1 Constraint B.
+ */
+export function checkAdScope(call: ChokepointCall): Decision | null {
+  if (call.category !== 'ad') return null;
+  const hasArgScope = call.args.scope !== undefined && call.args.scope !== null;
+  const hasCliScope = call.cliScope === true;
+  if (!hasArgScope && !hasCliScope) return null;
+  return {
+    kind: 'deny',
+    reason:
+      'AD tools must be called one target at a time; --scope is not supported for this category.',
+  };
+}
+
+/**
+ * v0.4-B — Constraint C: the session host's own domain controller
+ * is always blocked for AD tools (when realm lookup is enabled).
+ *
+ * The check fires only when:
+ *   - `env.realmLookup === true` (operator opted in via
+ *     `GMFT_REALM_LOOKUP=true`)
+ *   - AND `call.category === 'ad'`
+ *   - AND `call.args.target` is a non-empty string
+ *
+ * Resolution of "the PDC" is opt-in because `realm list`
+ * requires a working Kerberos configuration on the host, which
+ * most workstations do not have. When opted in, the chokepoint
+ * shells out to `realm list --name-only` ONCE per session (the
+ * result is cached on `env.pdcCache`) and compares it
+ * case-insensitively to `args.target`.
+ *
+ * The cache returns one of three values (see `PdcCache`):
+ *   - PDC FQDN (non-empty string) — match this against args.target
+ *   - `''` — no realm / not joined. Deny ALL AD tool calls
+ *     with a clear "verify realm" remediation hint.
+ *   - `null` — cache disabled (realmLookup === false). Skip
+ *     this rule (handled by the `env.realmLookup` check above).
+ *
+ * Runs AFTER `checkAdScope` (so we don't pay the realm lookup
+ * cost on a call that would be rejected for `--scope`) and
+ * BEFORE `checkElevation` (so the DC check fires before the
+ * elevation prompt, since the realm check is more informative
+ * when the operator's own DC is the issue).
+ *
+ * See ADR-0018 §D.3 and `safety.md` §10.1 Constraint C.
+ */
+export async function checkDomainController(
+  call: ChokepointCall,
+  env: ChokepointEnv,
+): Promise<Decision | null> {
+  if (!env.realmLookup) return null;
+  if (call.category !== 'ad') return null;
+  const target = call.args.target;
+  if (typeof target !== 'string' || target.length === 0) {
+    // No target to compare; the existing `checkTarget` rule will
+    // reject `targetRequired` calls with a missing target. We do
+    // not duplicate that error here.
+    return null;
+  }
+  const pdc = await env.pdcCache.getPdc();
+  if (pdc === null) {
+    // Cache disabled. Should be unreachable because we already
+    // checked `env.realmLookup === true`, but guards against a
+    // misconfigured cache implementation.
+    return null;
+  }
+  if (pdc === '') {
+    return {
+      kind: 'deny',
+      reason:
+        "realm lookup enabled but no realm found; run 'realm list' to verify the host is domain-joined and Kerberos is configured",
+    };
+  }
+  if (target.toLowerCase() === pdc.toLowerCase()) {
+    return {
+      kind: 'deny',
+      reason:
+        "target matches the session's domain controller; this is blocked by default for AD tools",
+    };
+  }
+  return null;
+}
