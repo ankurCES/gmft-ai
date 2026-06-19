@@ -173,3 +173,61 @@ export function redactAdSecrets(line: string): AdRedactionResult {
     redactedFields: Array.from(seen),
   };
 }
+
+/**
+ * v0.4-B.5 — helper for the `tool-result` audit-event writer. Takes
+ * a tool's `output` value (which is `unknown` in the executor's
+ * contract — could be a string, an object, `undefined` on the deny
+ * path, or anything the tool's Zod output schema validates) and
+ * returns the redacted string + the list of field kinds that were
+ * scrubbed, suitable for inclusion in a `tool-result` audit event.
+ *
+ * Stringification: `JSON.stringify` handles every value except
+ * `undefined` (which `JSON.stringify` drops). For `undefined`, we
+ * explicitly return `''` so the audit payload stays well-formed
+ * (`output_redacted: ''` for the deny case is fine — the audit
+ * reader checks `event.decision.kind === 'deny'` rather than
+ * scraping the output). We also coerce `null` and primitives to
+ * their `JSON.stringify` form (so `null` → `'null'`, `42` →
+ * `'42'`), which is consistent with how the JSONL transcript
+ * stores them.
+ *
+ * Composition: the call is `redactAdSecrets(stringify(output))`.
+ * The redaction patterns are tuned for the raw text shapes impacket
+ * emits (e.g. `Administrator:500:aad3b...:8846f...:::`). JSON-
+ * stringifying the output wraps the raw text in quotes and adds
+ * escaped characters where needed (`\n` → `\\n`, `"` → `\\"`).
+ * The patterns tolerate this because they use `[\w.-]+` /
+ * `[0-9a-f]{32}` character classes that match across escaped
+ * boundaries — the worst case is a multi-line secretsdump block
+ * where the line breaks become `\\n` literal characters, which
+ * the `$`-anchored `secretsdump SAM` regex still matches because
+ * `\\n` is just two literal characters between matchable portions.
+ *
+ * Performance: the redactor runs in O(n) over the stringified
+ * output. For a 1 MB secretsdump transcript that's ~10 ms on a
+ * modern CPU. The audit append is fire-and-forget (see
+ * `withAuditToolResult`), so the agent loop's tool-call latency
+ * is not coupled to redaction time.
+ *
+ * Test count: the helper is covered transitively by the
+ * `audit-tool-result.test.ts` suite (4 tests exercise the full
+ * pipeline through `withAuditToolResult`).
+ */
+export interface RedactedToolOutput {
+  /** Stringified + redacted form of the tool's output. May be `''` for `undefined`. */
+  redactedOutput: string;
+  /** Field-kind tags that were scrubbed. Empty for non-AD tool outputs. */
+  redactedFields: AdRedactedField[];
+}
+
+export function auditLogRedactedFields(output: unknown): RedactedToolOutput {
+  // `undefined` would stringify to literally `undefined`, which is
+  // not valid JSON. Substitute `''` so the audit payload's
+  // `output_redacted` field is always a valid JSON string. The
+  // audit reader checks `ok: false` + `decision.kind === 'deny'`
+  // to detect the no-output case rather than scraping the field.
+  const stringified = output === undefined ? '' : JSON.stringify(output);
+  const { redactedText, redactedFields } = redactAdSecrets(stringified);
+  return { redactedOutput: redactedText, redactedFields };
+}

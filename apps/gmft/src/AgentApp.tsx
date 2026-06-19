@@ -50,6 +50,7 @@ import {
   ToolRegistry,
   withAuditChokepoint,
   withSupervisor,
+  withAuditToolResult,
   type AgentEvent,
   type AuditSink,
   type ChatMessage,
@@ -758,6 +759,20 @@ export function AgentApp({
         // starts draining events so the ref is non-null the moment
         // the supervisor's state is observable.
         wrappedSupervisorRef.current = wrapped;
+        // v0.4-B.5 — wrap the supervisor's output iterable with
+        // `withAuditToolResult` so every `tool-result` event lands in
+        // the audit chain as a `tool-result` event (with the
+        // stringified + AD-redacted output and the `redacted_fields`
+        // field-kind tags). This is the ADR-0018 §D.5 contract — the
+        // audit-event writer must surface the AD-shaped redactions so
+        // post-session review can tell *what kind* of secrets were
+        // scrubbed, not just *that* something was scrubbed.
+        //
+        // We bind the audit-wrapped iterable to `auditIterable` (a new
+        // local) and drain that. The supervisor wrapper itself stays
+        // in `wrappedSupervisorRef` so the `/supervisor` slash command
+        // can still read lastFires() / lastPostmortem() off it.
+        const auditIterable = withAuditToolResult(wrapped, auditSinkRef.current!);
         // v0.3.A.2 — start a fresh per-turn event-id collector. Every
         // event the loop yields with an `id` field (tool-call-request,
         // tool-result, etc.) gets pushed here, and we attach the array
@@ -765,7 +780,7 @@ export function AgentApp({
         // can match a `supervisor-fire.targetEventId` back to a
         // transcript line.
         currentTurnEventIdsRef.current = [];
-        for await (const ev of wrapped) {
+        for await (const ev of auditIterable) {
           // v0.3.A.4 — append to the session-wide audit log. We use a
           // functional setState (avoids stale closures across turns);
           // the array is append-only so we don't need to dedupe.
