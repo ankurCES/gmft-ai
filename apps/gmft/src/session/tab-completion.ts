@@ -56,8 +56,10 @@ export const SLASH_COMMANDS: readonly string[] = Object.freeze([
   '/session',
   '/resume',
   '/report',
+  '/supervisor',
   '/tools',
   '/run',
+  '/audit',
   '/exit',
 ]);
 

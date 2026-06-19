@@ -60,6 +60,7 @@ import {
   type PromptEnv,
   type Severity,
   type SupervisorFire,
+  type SupervisorWrapper,
   type Tool,
   type ToolContext,
 } from '@gmft/core';
@@ -107,6 +108,7 @@ import {
   type RunAuditResult,
   type RunReportOpts,
   type RunReportResult,
+  type SupervisorSnapshot,
 } from './session/commands.js';
 import { verifyAuditLog, readAuditLog } from './cli-audit.js';
 import { execFile } from 'node:child_process';
@@ -539,6 +541,17 @@ export function AgentApp({
   // advice the supervisor pushed during the turn.
   const historyRef = useRef<ChatMessage[]>([]);
 
+  // v0.4-A.4 — hold a ref to the most recent `withSupervisor` wrapper
+  // so the `/supervisor` slash command can read `lastFires()` /
+  // `lastPostmortem()` from outside the submit closure. The ref is
+  // reassigned at the start of each submit and read by the slash
+  // callback (which closes over the ref, not the wrapper). The ref
+  // is `null` until the first submit completes — AgentApp sets it
+  // right after `withSupervisor(...)` returns, so the first `/supervisor`
+  // call after the first submit sees the snapshot from the just-
+  // completed turn.
+  const wrappedSupervisorRef = useRef<SupervisorWrapper | null>(null);
+
   const onConfirmation = useCallback(
     async (call: { id: string; name: string; args: Record<string, unknown>; reason: string; prompt?: string }): Promise<boolean> => {
       return new Promise<boolean>((resolve) => {
@@ -595,6 +608,19 @@ export function AgentApp({
           // `gmft audit` CLI dispatch. The slash command returns a
           // structured result; AgentApp handles the body formatting.
           runAudit: (opts: RunAuditOpts) => runAudit(opts),
+          // v0.4-A.4 — read the supervisor's snapshot for the most
+          // recently completed turn. Returns null before the first
+          // submit completes (the ref is still null) so the slash
+          // command can render a friendly "no turn yet" reply.
+          getSupervisorSnapshot: (): SupervisorSnapshot | null => {
+            const wrapped = wrappedSupervisorRef.current;
+            if (wrapped === null) return null;
+            const fires = wrapped.lastFires();
+            const postmortem = wrapped.lastPostmortem();
+            return postmortem !== undefined
+              ? { fires, postmortem }
+              : { fires };
+          },
           // v0.3.B — direct tool invocation via `/run <tool> [args...]`.
           // Builds the chokepoint lazily so the slash command works
           // even if the user runs `/run` before submitting any LLM
@@ -724,6 +750,14 @@ export function AgentApp({
           // override (--supervisor-model) generated the postmortem.
           modelId: supervisorModelId ?? activeModel,
         });
+        // v0.4-A.4 — stash the wrapper in a ref so the `/supervisor`
+        // slash command can read lastFires() / lastPostmortem() from
+        // outside the submit closure. The ref is overwritten on every
+        // submit (so the slash command always sees the most recent
+        // turn's snapshot). We assign BEFORE the `for await` loop
+        // starts draining events so the ref is non-null the moment
+        // the supervisor's state is observable.
+        wrappedSupervisorRef.current = wrapped;
         // v0.3.A.2 — start a fresh per-turn event-id collector. Every
         // event the loop yields with an `id` field (tool-call-request,
         // tool-result, etc.) gets pushed here, and we attach the array

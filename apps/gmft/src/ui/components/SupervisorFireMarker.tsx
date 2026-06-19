@@ -39,7 +39,9 @@ export function SupervisorFireMarker({
       ? `rule a — loop (${fire.tool} × ${fire.count})`
       : fire.kind === 'overclaim'
         ? `rule b — overclaim`
-        : `rule c — plan (${fire.severity})`;
+        : fire.kind === 'plan-issue'
+          ? `rule c — plan (${fire.severity})`
+          : `rule e — risk-escalation (${fire.kind})`;
   return (
     <Box marginLeft={2}>
       <Text color="yellow">⚠</Text>

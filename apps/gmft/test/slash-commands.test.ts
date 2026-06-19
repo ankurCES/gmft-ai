@@ -5,6 +5,10 @@ import { join } from 'node:path';
 import { dispatchSlash, type SlashContext } from '../src/session/commands.js';
 import { SessionStore } from '../src/session/store.js';
 import type { Message as Msg } from '../src/ui/components/Message.js';
+import type {
+  SupervisorFire,
+  SupervisorTurnRecord,
+} from '@gmft/core';
 
 describe('dispatchSlash', () => {
   let tmp: string;
@@ -608,6 +612,163 @@ describe('dispatchSlash', () => {
       expect(r.reply!.content).toContain('walk the audit chain');
       expect(r.reply!.content).toContain('show recent audit events');
       expect(r.reply!.content).toContain('follow the audit log');
+    });
+  });
+
+  // ───── /supervisor (v0.4-A.4) ──────────────────────────────────
+  // The /supervisor slash command surfaces the withSupervisor
+  // wrapper's lastFires() + lastPostmortem() accessors to the chat
+  // pane. Tests below cover:
+  //   1. snapshot is null (no turn yet) => friendly "no turn yet" reply
+  //   2. callback missing on SlashContext => "supervisor not wired"
+  //   3. quiet turn (fires=[], no postmortem) => "quiet" body
+  //   4. fires + postmortem (default subcommand) => renders both
+  //   5. /supervisor fires => renders only fires (no postmortem header)
+  //   6. /supervisor postmortem => renders only postmortem (no fires list)
+  //   7. unknown subcommand => friendly usage reply
+  describe('/supervisor', () => {
+    function makeSnapshot(overrides: {
+      fires?: readonly SupervisorFire[];
+      postmortem?: SupervisorTurnRecord;
+    } = {}): { fires: readonly SupervisorFire[]; postmortem?: SupervisorTurnRecord } {
+      const result: { fires: readonly SupervisorFire[]; postmortem?: SupervisorTurnRecord } = {
+        fires: overrides.fires ?? [],
+      };
+      if (overrides.postmortem !== undefined) result.postmortem = overrides.postmortem;
+      return result;
+    }
+
+    function makeCtxWithSnapshot(
+      snapshot: ReturnType<typeof makeSnapshot> | null,
+    ): SlashContext {
+      return makeCtx({
+        getSupervisorSnapshot: () => snapshot,
+      });
+    }
+
+    // Test fixtures used across multiple cases. The fires here use the
+    // exact shapes from `@gmft/core`'s supervisor-types.ts so they
+    // survive any future tightening of the type union.
+    const loopFire: SupervisorFire = {
+      kind: 'loop-detected',
+      tool: 'nmap_scan',
+      count: 4,
+      recent: ['nmap_scan', 'nmap_scan', 'nmap_scan', 'nmap_scan'],
+      advice: 'Vary the args or move on.',
+      targetEventId: 'evt-1',
+    };
+    const planFire: SupervisorFire = {
+      kind: 'plan-issue',
+      severity: 'warn',
+      text: 'sqlmap invoked without prior recon',
+      advice: 'Add a recon step before sqlmap.',
+      targetEventId: 'evt-2',
+    };
+    const firesOnly: readonly SupervisorFire[] = [loopFire];
+    const bothFires: readonly SupervisorFire[] = [loopFire, planFire];
+    const postmortem: SupervisorTurnRecord = {
+      fires: bothFires,
+      // NOTE: the SupervisorTurnRecord schema uses `postmortem` for
+      // the prose body (and a separate `postmortemError` for failure
+      // cases). Earlier revisions of this test used a `body:` field,
+      // which was the pre-A.3 schema — that no longer type-checks
+      // and would be silently dropped by the formatter.
+      postmortem: 'WHAT: sqlmap was called too early.\nLEARNED: need recon first.',
+      modelUsed: 'claude-haiku-4-5',
+    };
+
+    it('returns a "no turn yet" reply when getSupervisorSnapshot returns null', async () => {
+      const r = await dispatchSlash('/supervisor', makeCtxWithSnapshot(null));
+      if (r.kind !== 'handled') throw new Error('narrow');
+      expect(r.reply).toBeDefined();
+      expect(r.reply!.content).toContain('No turn has completed');
+    });
+
+    it('returns a "not wired" reply when getSupervisorSnapshot is missing from ctx', async () => {
+      // makeCtx() with no overrides => no getSupervisorSnapshot.
+      const r = await dispatchSlash('/supervisor', makeCtx());
+      if (r.kind !== 'handled') throw new Error('narrow');
+      expect(r.reply!.content).toContain('not wired');
+    });
+
+    it('renders a "quiet (no fires)" body for a snapshot with empty fires and no postmortem', async () => {
+      const r = await dispatchSlash(
+        '/supervisor',
+        makeCtxWithSnapshot(makeSnapshot({ fires: [] })),
+      );
+      if (r.kind !== 'handled') throw new Error('narrow');
+      expect(r.reply!.content).toContain('quiet');
+      expect(r.reply!.content).toContain('no fires');
+      // No fires list, no postmortem header for a quiet turn.
+      expect(r.reply!.content).not.toContain('Fires:');
+      expect(r.reply!.content).not.toContain('Postmortem');
+    });
+
+    it('renders fires + postmortem for the default subcommand (no arg)', async () => {
+      const r = await dispatchSlash(
+        '/supervisor',
+        makeCtxWithSnapshot(makeSnapshot({ fires: bothFires, postmortem })),
+      );
+      if (r.kind !== 'handled') throw new Error('narrow');
+      // Header line: "Last turn: 2 fire(s)".
+      expect(r.reply!.content).toContain('Last turn: 2 fire(s)');
+      // Fires list includes both fire kinds.
+      expect(r.reply!.content).toContain('[loop-detected]');
+      expect(r.reply!.content).toContain('[plan-issue]');
+      // LoopDetectedFire doesn't carry severity/text, but the formatter
+      // renders "(severity: -)" + "(see advice)" so the operator sees
+      // a placeholder, not a crash.
+      expect(r.reply!.content).toContain('severity: -');
+      // PlanIssueFire carries severity + text — both must be present.
+      expect(r.reply!.content).toContain('severity: warn');
+      expect(r.reply!.content).toContain('sqlmap invoked without prior recon');
+      // Postmortem header + body + model provenance line.
+      expect(r.reply!.content).toContain('Postmortem');
+      expect(r.reply!.content).toContain('(model: claude-haiku-4-5)');
+      expect(r.reply!.content).toContain('WHAT: sqlmap was called too early.');
+    });
+
+    it('renders only fires for the /supervisor fires subcommand (no postmortem header)', async () => {
+      const r = await dispatchSlash(
+        '/supervisor fires',
+        makeCtxWithSnapshot(makeSnapshot({ fires: bothFires, postmortem })),
+      );
+      if (r.kind !== 'handled') throw new Error('narrow');
+      // The id suffix proves the right sub-branch fired.
+      expect(r.reply!.id).toContain('supervisor-fires');
+      // Fires list is present.
+      expect(r.reply!.content).toContain('[loop-detected]');
+      expect(r.reply!.content).toContain('[plan-issue]');
+      // Postmortem section is NOT rendered for the fires-only subcommand.
+      expect(r.reply!.content).not.toContain('Postmortem');
+      expect(r.reply!.content).not.toContain('(model:');
+    });
+
+    it('renders only the postmortem for the /supervisor postmortem subcommand', async () => {
+      const r = await dispatchSlash(
+        '/supervisor postmortem',
+        makeCtxWithSnapshot(makeSnapshot({ fires: bothFires, postmortem })),
+      );
+      if (r.kind !== 'handled') throw new Error('narrow');
+      // The id suffix proves the right sub-branch fired.
+      expect(r.reply!.id).toContain('supervisor-postmortem');
+      // Postmortem header + body + model provenance line.
+      expect(r.reply!.content).toContain('Postmortem');
+      expect(r.reply!.content).toContain('(model: claude-haiku-4-5)');
+      expect(r.reply!.content).toContain('WHAT: sqlmap was called too early.');
+      // Fires list is NOT rendered for the postmortem-only subcommand.
+      expect(r.reply!.content).not.toContain('[loop-detected]');
+      expect(r.reply!.content).not.toContain('[plan-issue]');
+    });
+
+    it('returns a usage reply for an unknown subcommand (e.g. /supervisor bogus)', async () => {
+      const r = await dispatchSlash(
+        '/supervisor bogus',
+        makeCtxWithSnapshot(makeSnapshot({ fires: firesOnly, postmortem })),
+      );
+      if (r.kind !== 'handled') throw new Error('narrow');
+      expect(r.reply!.content).toContain('Unknown supervisor subcommand');
+      expect(r.reply!.content).toContain('Usage: /supervisor [fires|postmortem]');
     });
   });
 });
