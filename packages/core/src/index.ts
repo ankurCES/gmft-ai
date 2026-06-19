@@ -148,5 +148,5 @@ export {
 } from './audit/paths.js';
 export { AuditWriter } from './audit/writer.js';
 export { NOOP_SINK, makeAuditSink, type AuditSink } from './audit/sink.js';
-export { withAuditChokepoint } from './audit/instrument.js';
+export { withAuditChokepoint, withAuditSupervisor } from './audit/instrument.js';
 export { readAuditChainHead, type AuditChainHead } from './audit/head.js';

@@ -40,7 +40,16 @@ export type AuditEventKind =
   | 'session-start'
   | 'session-end'
   | 'runner-mode'
-  | 'onboard';
+  | 'onboard'
+  // v0.4-A.3 — supervisor-fire event. Emitted by `withAuditSupervisor`
+  // (in `audit/instrument.ts`) for every `supervisor-fire` AgentEvent
+  // yielded by `withSupervisor(...)`. Records the fire's kind, severity,
+  // text, advice, targetEventId, and any kind-specific fields (tool,
+  // count, windowKey, firstToolOfTurn). Lands in the same HMAC chain as
+  // `chokepoint-decision` events so post-session review can render the
+  // supervisor's fires in `gmft audit log --kind supervisor-fire` and the
+  // verifier can prove they were not tampered with.
+  | 'supervisor-fire';
 
 export interface AuditEvent {
   /** ISO 8601 timestamp, set by the writer (not the caller). */
