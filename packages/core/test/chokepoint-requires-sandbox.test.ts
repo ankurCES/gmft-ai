@@ -53,30 +53,30 @@ function call(overrides: Partial<ChokepointCall> = {}): ChokepointCall {
 }
 
 describe('checkRequiresSandbox rule', () => {
-  it('allow w/ docker: destructive+resolvedAuto=docker is allowed', () => {
+  it('allow w/ docker: destructive+resolvedAuto=docker is allowed', async () => {
     const cp = createChokepoint(env({ runnerCapabilities: sandboxedCaps }));
-    expect(cp.decide(call({ flags: ['destructive'] })).kind).toBe('confirm');
+    expect((await cp.decide(call({ flags: ['destructive'] }))).kind).toBe('confirm');
     // The destructive rule still prompts the user; the new rule
     // does not interfere when a sandboxed runner is available.
   });
 
-  it('allow w/ landlock: destructive+resolvedAuto=host+landlock is allowed', () => {
+  it('allow w/ landlock: destructive+resolvedAuto=host+landlock is allowed', async () => {
     const cp = createChokepoint(env({ runnerCapabilities: landlockCaps }));
-    expect(cp.decide(call({ flags: ['destructive'] })).kind).toBe('confirm');
+    expect((await cp.decide(call({ flags: ['destructive'] }))).kind).toBe('confirm');
   });
 
-  it('deny when host+no-landlock+destructive (no override)', () => {
+  it('deny when host+no-landlock+destructive (no override)', async () => {
     const cp = createChokepoint(env({ runnerCapabilities: hostCaps }));
-    const d = cp.decide(call({ flags: ['destructive'] }));
+    const d = await cp.decide(call({ flags: ['destructive'] }));
     // checkDestructive fires BEFORE checkRequiresSandbox, so the user
     // still gets the confirm prompt. The unsandboxed deny only fires
     // for elevated tools (which have no confirm step).
     expect(d.kind).toBe('confirm');
   });
 
-  it('deny when host+no-landlock+elevated (no override)', () => {
+  it('deny when host+no-landlock+elevated (no override)', async () => {
     const cp = createChokepoint(env({ runnerCapabilities: hostCaps }));
-    const d = cp.decide(call({ flags: ['requiresElevation'] }));
+    const d = await cp.decide(call({ flags: ['requiresElevation'] }));
     // No allowElevation -> elevation rule denies first.
     expect(d.kind).toBe('deny');
     if (d.kind === 'deny') {
@@ -84,44 +84,44 @@ describe('checkRequiresSandbox rule', () => {
     }
   });
 
-  it('deny when host+no-landlock+elevated+allowElevation (no override)', () => {
+  it('deny when host+no-landlock+elevated+allowElevation (no override)', async () => {
     // Elevation passes; the unsandboxed rule then denies.
     const cp = createChokepoint(env({
       runnerCapabilities: hostCaps,
       allowElevation: true,
     }));
-    const d = cp.decide(call({ flags: ['requiresElevation'] }));
+    const d = await cp.decide(call({ flags: ['requiresElevation'] }));
     expect(d.kind).toBe('deny');
     if (d.kind === 'deny') {
       expect(d.reason).toMatch(/host fallback for destructive/);
     }
   });
 
-  it('allow with GMFT_ALLOW_UNSANDBOXED_DESTRUCTIVE=true: same as deny case but allowed', () => {
+  it('allow with GMFT_ALLOW_UNSANDBOXED_DESTRUCTIVE=true: same as deny case but allowed', async () => {
     const cp = createChokepoint(env({
       runnerCapabilities: hostCaps,
       allowElevation: true,
       allowUnsandboxedDestructive: true,
     }));
-    const d = cp.decide(call({ flags: ['requiresElevation'] }));
+    const d = await cp.decide(call({ flags: ['requiresElevation'] }));
     expect(d.kind).toBe('allow');
   });
 
-  it('allow when tool is read-only: resolvedAuto=host, no flags -> allow', () => {
+  it('allow when tool is read-only: resolvedAuto=host, no flags -> allow', async () => {
     const cp = createChokepoint(env({ runnerCapabilities: hostCaps }));
-    expect(cp.decide(call())).toEqual({ kind: 'allow' });
+    expect(await cp.decide(call())).toEqual({ kind: 'allow' });
   });
 
-  it('allow when tool has targetRequired but not destructive/elevated', () => {
+  it('allow when tool has targetRequired but not destructive/elevated', async () => {
     const cp = createChokepoint(env({ runnerCapabilities: hostCaps }));
-    const d = cp.decide(call({
+    const d = await cp.decide(call({
       flags: ['targetRequired'],
       args: { target: 'example.com' },
     }));
     expect(d.kind).toBe('allow');
   });
 
-  it('checkRequiresSandbox in isolation: destructive+host returns the deny', () => {
+  it('checkRequiresSandbox in isolation: destructive+host returns the deny', async () => {
     // Bypass the aggregator and call the rule directly to verify the
     // rule's own deny behavior. At the aggregator level the
     // checkDestructive rule wins, so the user gets a confirm prompt

@@ -91,7 +91,7 @@ vi.mock('@gmft/core', async (importOriginal) => {
         }) => { kind: string; reason?: string };
       };
     }) {
-      const decision = args.chokepoint.decide({
+      const decision = await args.chokepoint.decide({
         tool: 'shell_exec',
         category: 'shell',
         flags: ['requiresElevation'],
@@ -209,7 +209,7 @@ describe('AgentApp e2e: chokepoint denies elevated tools when no sandbox is avai
       | { chokepoint: { decide: (c: { tool: string; category: string; flags: readonly string[] }) => { kind: string; reason?: string } } }
       | undefined;
     expect(capturedCall).toBeDefined();
-    const decision = capturedCall!.chokepoint.decide({
+    const decision = await capturedCall!.chokepoint.decide({
       tool: 'shell_exec',
       category: 'shell',
       flags: ['requiresElevation'],

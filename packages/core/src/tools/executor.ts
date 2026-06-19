@@ -146,7 +146,7 @@ export async function runInner(
     args: parsed.data,
     ...(opts.suppressTypeToConfirm ? {} : { typeToConfirm: entry.typeToConfirm }),
   };
-  const decision = chokepoint.decide(chokepointCall);
+  const decision = await chokepoint.decide(chokepointCall);
 
   if (decision.kind === 'deny') {
     return { ok: false, reason: decision.reason, decision, denied: true };
@@ -334,7 +334,7 @@ export async function executeWithScope(
     args: { ...baseArgs, target: filePath },
     ...(opts.suppressTypeToConfirm ? {} : { typeToConfirm: entry.typeToConfirm }),
   };
-  const scopeDecision = chokepoint.decide(scopeCall);
+  const scopeDecision = await chokepoint.decide(scopeCall);
   if (scopeDecision.kind === 'deny') {
     return {
       results: [],

@@ -35,8 +35,11 @@ import type { SupervisorFire } from '../agent/supervisor-types.js';
 
 export function withAuditChokepoint(inner: Chokepoint, sink: AuditSink): Chokepoint {
   return {
-    decide(call: ChokepointCall): Decision {
-      const decision = inner.decide(call);
+    async decide(call: ChokepointCall): Promise<Decision> {
+      // v0.4-B — `chokepoint.decide()` is now async (the DC check
+      // may shell out to `realm list`). Await it before reading
+      // `.kind`/`.reason` for the audit payload.
+      const decision = await inner.decide(call);
       // Fire-and-forget. The promise is intentionally not awaited —
       // see the file header. We attach a no-op catch so an unhandled
       // rejection doesn't crash the process if the sink throws.

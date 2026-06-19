@@ -338,13 +338,21 @@ hash itself.
   v0.4.0-A.1; the only addition is the optional
   `redacted_fields: string[]` field on entries that triggered
   `redactAdSecrets`.
-- It does not change the operator-sock protocol or the
-  chokepoint's rule order (§9). The new checks (B and C) run
-  **after** `checkDestructive` and `checkElevation`, in this
-  order: `checkDestructive` → `checkElevation` →
-  `checkAdScope` → `checkDomainController` → `confirm` →
-  `redactAdSecrets` (post-execution). The reordering is
-  documented in [ADR-0018](plans/adr/0018-v0.4-b-ad-attack-gate.md).
+- It does not change the operator-sock protocol. The two new
+  AD-category checks (`checkAdScope`, `checkDomainController`)
+  are inserted at the front of the chokepoint rule chain so
+  they fire before the four baseline rules from §9. The full
+  order is: `checkAdScope` → `checkDomainController` →
+  `checkElevation` → `checkTypeToConfirm` → `checkDestructive`
+  → `checkTarget` → `checkRequiresSandbox` → allow. The
+  reordering (and the rationale for putting `checkTarget`
+  *after* `checkDestructive` so a `destructive+targetRequired`
+  call with a known-bad target still asks for confirmation)
+  is documented in [ADR-0018](plans/adr/0018-v0.4-b-ad-attack-gate.md)
+  §D.4.
+  Redaction (`redactAdSecrets`) runs **after** the subprocess
+  returns, on the same write loop that already calls
+  `redactSecrets` (v0.1.5g).
 
 ### 10.5 Versioning
 

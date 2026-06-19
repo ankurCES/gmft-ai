@@ -12,7 +12,7 @@ import { withAuditChokepoint } from '../src/audit/instrument.js';
 import type { Chokepoint, ChokepointCall, Decision } from '../src/chokepoint/decision.js';
 
 describe('audit/sink — opt-out', () => {
-  it('GMFT_DISABLE_AUDIT_LOG=true yields a no-op sink', () => {
+  it('GMFT_DISABLE_AUDIT_LOG=true yields a no-op sink', async () => {
     const inner: AuditSink = { append: vi.fn(async () => {}) };
     const gated = makeAuditSink(inner, { GMFT_DISABLE_AUDIT_LOG: 'true' });
     expect(gated).toBe(NOOP_SINK);
@@ -22,7 +22,7 @@ describe('audit/sink — opt-out', () => {
 });
 
 describe('audit/instrument — withAuditChokepoint', () => {
-  it('emits one chokepoint-decision event per decide() call', () => {
+  it('emits one chokepoint-decision event per decide() call', async () => {
     const append = vi.fn(async (_k: string, _p: Record<string, unknown>) => {});
     const sink: AuditSink = { append };
     const inner: Chokepoint = {
@@ -35,9 +35,9 @@ describe('audit/instrument — withAuditChokepoint', () => {
     const wrapped = withAuditChokepoint(inner, sink);
 
     // Three calls, three decisions
-    wrapped.decide({ tool: 'allowed', category: 'shell', flags: [], args: {} });
-    wrapped.decide({ tool: 'blocked', category: 'shell', flags: ['destructive'], args: { target: '10.0.0.1' } });
-    wrapped.decide({ tool: 'confirmable', category: 'web', flags: [], args: {}, typeToConfirm: 'ATTACK' });
+    await wrapped.decide({ tool: 'allowed', category: 'shell', flags: [], args: {} });
+    await wrapped.decide({ tool: 'blocked', category: 'shell', flags: ['destructive'], args: { target: '10.0.0.1' } });
+    await wrapped.decide({ tool: 'confirmable', category: 'web', flags: [], args: {}, typeToConfirm: 'ATTACK' });
 
     // The fire-and-forget append is microtask-queued; flush them.
     // `await Promise.resolve()` in a microtask drain loop is enough.

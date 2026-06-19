@@ -41,7 +41,7 @@ function targetCall(overrides: Partial<ChokepointCall> = {}): ChokepointCall {
 }
 
 describe('scope file → chokepoint end-to-end', () => {
-  it('a loaded scope file gates the chokepoint to its listed targets', () => {
+  it('a loaded scope file gates the chokepoint to its listed targets', async () => {
     const dir = scratchDir();
     try {
       const p = join(dir, 'scope.json');
@@ -63,7 +63,7 @@ describe('scope file → chokepoint end-to-end', () => {
 
       // Step 3: the resulting chokepoint denies an unlisted target.
       const cp = createChokepoint(env);
-      const deny = cp.decide(targetCall({ args: { target: 'other.example.com' } }));
+      const deny = await cp.decide(targetCall({ args: { target: 'other.example.com' } }));
       expect(deny).toEqual({
         kind: 'deny',
         reason:
@@ -72,14 +72,14 @@ describe('scope file → chokepoint end-to-end', () => {
       });
 
       // Step 4: a listed target is still allowed.
-      const allow = cp.decide(targetCall({ args: { target: 'scanme.nmap.org' } }));
+      const allow = await cp.decide(targetCall({ args: { target: 'scanme.nmap.org' } }));
       expect(allow.kind).toBe('allow');
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
   });
 
-  it('omitting the allowlist (no --scope flag) keeps the back-compat behavior', () => {
+  it('omitting the allowlist (no --scope flag) keeps the back-compat behavior', async () => {
     // This pins the contract that an empty allowlist is a true
     // no-op: any well-formed target passes the target-rule. The
     // denylist (also empty here) is the only negative check; that
@@ -91,11 +91,11 @@ describe('scope file → chokepoint end-to-end', () => {
     });
     const cp = createChokepoint(env);
     expect(env.allowlist).toEqual([]);
-    expect(cp.decide(targetCall({ args: { target: 'one.example.com' } })).kind).toBe('allow');
-    expect(cp.decide(targetCall({ args: { target: 'two.example.com' } })).kind).toBe('allow');
+    expect((await cp.decide(targetCall({ args: { target: 'one.example.com' } }))).kind).toBe('allow');
+    expect((await cp.decide(targetCall({ args: { target: 'two.example.com' } }))).kind).toBe('allow');
   });
 
-  it('an empty allowlist from a scope file with no entries is a no-op (operator chose to allow nothing explicitly)', () => {
+  it('an empty allowlist from a scope file with no entries is a no-op (operator chose to allow nothing explicitly)', async () => {
     // Edge case: the operator writes `{ "allow": [] }` on purpose
     // to mean "deny every target". That's almost certainly a
     // misconfiguration, but the loader accepts it and the
@@ -118,7 +118,7 @@ describe('scope file → chokepoint end-to-end', () => {
       // contract on `checkTarget`): a literal empty array, not
       // undefined, still means "no allowlist enforced".
       const cp = createChokepoint(env);
-      expect(cp.decide(targetCall({ args: { target: 'scanme.nmap.org' } })).kind).toBe('allow');
+      expect((await cp.decide(targetCall({ args: { target: 'scanme.nmap.org' } }))).kind).toBe('allow');
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
