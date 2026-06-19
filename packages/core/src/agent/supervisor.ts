@@ -62,6 +62,7 @@ import {
   observeRuleA,
   observeRuleB,
   observeRuleC,
+  observeRuleE,
   applyFire,
 } from './supervisor-rules.js';
 import {
@@ -136,19 +137,26 @@ export function withSupervisor(opts: WithSupervisorOpts): SupervisorWrapper {
 
   const iterator = (async function* () {
     for await (const event of opts.runTurn(opts.runTurnOpts)) {
-      // Run all 3 rules in order. Each is pure: (state, event) → {state, fire?}.
+      // Run all rules in order. Each is pure: (state, event) → {state, fire?}.
+      // v0.4-A: observeRuleE runs BEFORE observeRuleC because Rule E reads
+      // the pre-call `toolsCalledThisTurn` counter (it must be `=== 0`).
+      // observeRuleC increments the counter on every tool-call-request,
+      // so running E after C would cause E's gate to over-fire on every
+      // 2nd+ destructive call in a turn. See ADR-0014 §Decision.
       const rA = observeRuleA(state, event);
       state = rA.state;
-      const rB = observeRuleB(state, event, opts.sessionFindings ?? []);
-      state = rB.state;
+      const rE = observeRuleE(state, event);
+      state = rE.state;
       const rC = observeRuleC(state, event);
       state = rC.state;
+      const rB = observeRuleB(state, event, opts.sessionFindings ?? []);
+      state = rB.state;
 
-      // Collect any fires that triggered on this event. Order is A, B, C
-      // (the order they ran in). Multiple rules can fire on the same
-      // event (e.g. A on a 4th nmap call AND C.2 on the 3rd nmap
-      // family call) — both advice messages are pushed.
-      for (const fire of [rA.fire, rB.fire, rC.fire].filter(Boolean) as SupervisorFire[]) {
+      // Collect any fires that triggered on this event. Order is the order
+      // they ran in. Multiple rules can fire on the same event (e.g. A on
+      // a 4th nmap call AND C.2 on the 3rd nmap family call) — both advice
+      // messages are pushed.
+      for (const fire of [rA.fire, rE.fire, rC.fire, rB.fire].filter(Boolean) as SupervisorFire[]) {
         state = applyFire(state, fire);
         // Mirror the v0.1 AgentApp history-mutation pattern, but
         // immutable (no in-place push — would alias the array the

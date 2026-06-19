@@ -705,11 +705,13 @@ export function AgentApp({
           // session store (A.3 work). Pass `undefined` so Rule B uses
           // an empty array internally and degrades gracefully.
           sessionFindings: undefined,
-          // chokepointSessionTarget is read once at chokepoint build
-          // time (line 380) and lives in chokepointRef.current's config.
-          // The supervisor's Rule C.3 only consults this for the
-          // `targetRequired` flag, which no current tool uses, so
-          // passing undefined is safe for A.2.
+          // v0.4-A: chokepointSessionTarget is currently not wired through.
+          // The supervisor's Rule C.3 (targetRequired gate) would consult
+          // this, but no non-destructive targetRequired tool exists in the
+          // registry yet, so passing undefined is safe. Rule E
+          // (risk-escalation, v0.4-A.1) does NOT consult this field. See
+          // ADR-0014 §Open follow-ups for the v0.4-A.x plan to wire this
+          // once a targetRequired tool exists.
           chokepointSessionTarget: undefined,
           // v0.3.A.3 — pass the supervisor's model so the wrapper
           // generates the end-of-turn postmortem (closes the v0.2.A.3

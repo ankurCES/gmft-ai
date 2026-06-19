@@ -60,7 +60,25 @@ export type PlanIssueFire = {
   targetEventId: string;
 };
 
-export type SupervisorFire = LoopDetectedFire | OverclaimFire | PlanIssueFire;
+// v0.4-A — risk-escalation fire. See ADR-0014.
+// Fires when a destructive tool is the FIRST tool of the turn.
+// This is a stricter gate than Rule C.1, which deliberately skips
+// the first tool of the turn (see supervisor-rules.ts:339).
+// `firstToolOfTurn` is a literal `true` flag — the schema uses a
+// z.literal(true) so the field is self-documenting in the wire format.
+export type RiskEscalationFire = {
+  kind: 'risk-escalation';
+  tool: string;
+  firstToolOfTurn: true;
+  advice: string;
+  targetEventId: string;
+};
+
+export type SupervisorFire =
+  | LoopDetectedFire
+  | OverclaimFire
+  | PlanIssueFire
+  | RiskEscalationFire;
 
 // -- SupervisorState (in-memory, held by the wrapper) --
 
@@ -128,6 +146,14 @@ export const SupervisorFireRecordSchema = z.discriminatedUnion('kind', [
     kind: z.literal('plan-issue'),
     severity: z.enum(['info', 'warn']),
     text: z.string(),
+    advice: z.string(),
+    targetEventId: z.string(),
+  }),
+  // v0.4-A — risk-escalation fire. See ADR-0014.
+  z.object({
+    kind: z.literal('risk-escalation'),
+    tool: z.string(),
+    firstToolOfTurn: z.literal(true),
     advice: z.string(),
     targetEventId: z.string(),
   }),
