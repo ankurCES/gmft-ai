@@ -50,6 +50,7 @@ import {
   ToolRegistry,
   withAuditChokepoint,
   withSupervisor,
+  withAuditSupervisor,
   withAuditToolResult,
   type AgentEvent,
   type AuditSink,
@@ -759,20 +760,41 @@ export function AgentApp({
         // starts draining events so the ref is non-null the moment
         // the supervisor's state is observable.
         wrappedSupervisorRef.current = wrapped;
-        // v0.4-B.5 — wrap the supervisor's output iterable with
-        // `withAuditToolResult` so every `tool-result` event lands in
-        // the audit chain as a `tool-result` event (with the
-        // stringified + AD-redacted output and the `redacted_fields`
-        // field-kind tags). This is the ADR-0018 §D.5 contract — the
-        // audit-event writer must surface the AD-shaped redactions so
-        // post-session review can tell *what kind* of secrets were
-        // scrubbed, not just *that* something was scrubbed.
+        // v0.4-A.6 — wrap the supervisor's output iterable with
+        // `withAuditSupervisor` so every `supervisor-fire` event
+        // lands in the audit chain as a `supervisor-fire` audit
+        // event (with the fire's common fields — kind, advice,
+        // targetEventId — plus kind-specific fields like severity,
+        // text, tool, count). The wrapper has been exported from
+        // `@gmft/core` since v0.4-A.3 with full unit-test coverage;
+        // this is the AgentApp-side wiring that completes the audit-
+        // chain picture.
         //
-        // We bind the audit-wrapped iterable to `auditIterable` (a new
-        // local) and drain that. The supervisor wrapper itself stays
-        // in `wrappedSupervisorRef` so the `/supervisor` slash command
-        // can still read lastFires() / lastPostmortem() off it.
-        const auditIterable = withAuditToolResult(wrapped, auditSinkRef.current!);
+        // We bind the audit-decorated iterable to `auditSupervisor`
+        // (a new local) and pass THAT to `withAuditToolResult` below.
+        // The supervisor wrapper itself stays in `wrappedSupervisorRef`
+        // so the `/supervisor` slash command can still read
+        // lastFires() / lastPostmortem() off it. (The audit decorator
+        // is a transparent iterable wrapper — it does not add new
+        // methods to the supervisor, so it must stay out of the
+        // snapshot-ref path.)
+        const auditSupervisor = withAuditSupervisor(wrapped, auditSinkRef.current!);
+        // v0.4-B.5 — wrap the audit-decorated supervisor's output
+        // iterable with `withAuditToolResult` so every `tool-result`
+        // event lands in the audit chain as a `tool-result` event
+        // (with the stringified + AD-redacted output and the
+        // `redacted_fields` field-kind tags). This is the ADR-0018
+        // §D.5 contract — the audit-event writer must surface the
+        // AD-shaped redactions so post-session review can tell
+        // *what kind* of secrets were scrubbed, not just *that*
+        // something was scrubbed.
+        //
+        // We bind the audit-wrapped iterable to `auditIterable` (a
+        // new local) and drain that. The supervisor wrapper itself
+        // stays in `wrappedSupervisorRef` so the `/supervisor` slash
+        // command can still read lastFires() / lastPostmortem() off
+        // it.
+        const auditIterable = withAuditToolResult(auditSupervisor, auditSinkRef.current!);
         // v0.3.A.2 — start a fresh per-turn event-id collector. Every
         // event the loop yields with an `id` field (tool-call-request,
         // tool-result, etc.) gets pushed here, and we attach the array

@@ -4,6 +4,43 @@ All notable changes to GMFT-AI are documented here.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning: [Semantic](https://semver.org/).
 
+## [0.4.0-A.6] — 2026-06-19
+
+**v0.4.0-A.6 — Wire `withAuditSupervisor` into AgentApp.** The
+supervisor-audit wrapper has been exported from `@gmft/core`
+since v0.4-A.3 with full unit-test coverage, but never reached
+AgentApp. v0.4-B.5's audit-event wiring (`withAuditToolResult`)
+made the gap obvious: the audit chain recorded tool-results and
+chokepoint-decisions but silently dropped every `supervisor-fire`
+event. This slice closes the loop. **962 tests green** (1 testkit
++ 310 core + 379 tools + 272 gmft). core went 308 → 310 (+2 new
+tests in `audit-chain-integration.test.ts`). No breaking API
+changes.
+
+### Added
+- **`withAuditSupervisor` wired into `AgentApp.tsx`.** The chain
+  becomes `chokepoint → withAuditChokepoint → withSupervisor →
+  withAuditSupervisor → withAuditToolResult`. The supervisor
+  wrapper stays in `wrappedSupervisorRef` so the `/supervisor`
+  slash command can still read `lastFires()` / `lastPostmortem()`
+  off it (the audit decorator is a transparent iterable wrapper
+  and does NOT add new methods to the supervisor, so it must
+  stay out of the snapshot-ref path).
+- **`audit-chain-integration.test.ts`** in `packages/core/test/`
+  (2 tests): end-to-end composition proving both audit wrappers
+  cooperate when piped together. Test 1 — a turn with a
+  `tool-result` + a `supervisor-fire` produces BOTH audit events
+  with the right payloads (`tool-result` with `redacted_fields`,
+  `supervisor-fire` with kind + advice + targetEventId +
+  kind-specific fields). Test 2 — the fire-and-forget semantics
+  survive the chain: a sink that always rejects does not break
+  the iterable drain.
+
+### Removed
+- **The "Known gap" section** in the v0.4.0-B.5 CHANGELOG entry
+  and the v0.4-B.5 ADR-0018 amendment note. The supervisor-fire
+  audit wiring is now closed.
+
 ## [0.4.0-B.5] — 2026-06-19
 
 **v0.4.0-B.5 — Audit-event wiring for tool results.** Closes the
@@ -47,13 +84,6 @@ tests for the wrapper). No breaking API changes.
   `MAX_TOOL_RESULT_OUTPUT_CHARS`, `auditLogRedactedFields`, and
   the `RedactedToolOutput` type. Downstream consumers can wrap
   any iterable of agent events with the same one-liner.
-
-### Known gap (NOT closed by B.5)
-- `withAuditSupervisor` is exported from `@gmft/core` but is NOT
-  yet wired into `AgentApp.tsx`. Supervisor fires still render in
-  the TUI via `wrappedSupervisorRef.current.lastFires()` but they
-  do NOT land in the audit chain. This was an unfinished v0.4-A.3
-  wiring step. Tracking in a separate ticket (B.6 or v0.4-A.6).
 
 ## [0.4.0-B.2] — 2026-06-19
 
