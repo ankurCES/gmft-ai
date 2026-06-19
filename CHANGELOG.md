@@ -4,6 +4,57 @@ All notable changes to GMFT-AI are documented here.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning: [Semantic](https://semver.org/).
 
+## [0.4.0-B.5] — 2026-06-19
+
+**v0.4.0-B.5 — Audit-event wiring for tool results.** Closes the
+ADR-0018 §D.5 contract: the audit chain now records
+`redacted_fields: AdRedactedField[]` on every `tool-result` event,
+plus a stringified + AD-redacted `output_redacted` field so
+post-session review can see exactly what the tool returned (with
+hashes scrubbed). The `redactAdSecrets` library function from B.4
+now has a production consumer. **960 tests green** (1 testkit +
+308 core + 379 tools + 272 gmft). core went 304 → 308 (+4 new
+tests for the wrapper). No breaking API changes.
+
+### Added
+- **`withAuditToolResult(inner, sink)`** in
+  `packages/core/src/audit/instrument.ts`. Sibling of
+  `withAuditSupervisor` — wraps an `AsyncIterable<AgentEvent>`,
+  observes every `tool-result` event, and fires
+  `sink.append('tool-result', payload)` fire-and-forget. The
+  payload carries `name`, `ok`, optional `reason`,
+  `redacted_fields: AdRedactedField[]`, and
+  `output_redacted: string`. `output_redacted` is truncated to
+  `MAX_TOOL_RESULT_OUTPUT_CHARS` (16 KB) at a UTF-16 code-unit
+  boundary so a runaway tool can't fill the audit chain.
+- **`auditLogRedactedFields(output)`** in
+  `packages/core/src/transcript/redact-ad.ts`. The helper the
+  B.4 doc comment promised but didn't yet export. Stringifies
+  the tool's `unknown` output (substituting `''` for
+  `undefined` so the audit payload stays valid JSON), runs
+  `redactAdSecrets`, and returns `{ redactedOutput, redactedFields }`.
+- **Wired into `AgentApp.tsx`.** The agent-loop chain becomes
+  `chokepoint → withAuditChokepoint → withSupervisor →
+  withAuditSupervisor → withAuditToolResult`. The audit-sink
+  ref was already created for the chokepoint wrapper; the new
+  wrapper reuses it.
+- **`audit-tool-result.test.ts`** in `packages/core/test/` (4
+  tests): one audit append per yielded tool-result; payload
+  contains `redacted_fields` for secretsdump + kerberoast
+  inputs; non-tool-result events pass through with zero audit
+  appends; truncation kicks in for outputs > 16 KB.
+- **`@gmft/core` re-exports**: `withAuditToolResult`,
+  `MAX_TOOL_RESULT_OUTPUT_CHARS`, `auditLogRedactedFields`, and
+  the `RedactedToolOutput` type. Downstream consumers can wrap
+  any iterable of agent events with the same one-liner.
+
+### Known gap (NOT closed by B.5)
+- `withAuditSupervisor` is exported from `@gmft/core` but is NOT
+  yet wired into `AgentApp.tsx`. Supervisor fires still render in
+  the TUI via `wrappedSupervisorRef.current.lastFires()` but they
+  do NOT land in the audit chain. This was an unfinished v0.4-A.3
+  wiring step. Tracking in a separate ticket (B.6 or v0.4-A.6).
+
 ## [0.4.0-B.2] — 2026-06-19
 
 **v0.4.0-B.2 — `redactAdSecrets` post-execution pass.** Adds a
@@ -127,8 +178,6 @@ gmft). No breaking API changes for the existing 30 tools.
   `apps/gmft/test/` updated; all 882 → 909 tests still green.
 
 ### Planned for later v0.4-B.x slices
-- **`redactAdSecrets` post-execution pass** (ADR-0018 §D.5) — masks
-  NTLM hashes + Kerberos ticket material in the session transcript.
 - **CLI `--dc-ip` flag wiring** in `apps/gmft/src/cli.tsx`.
 - **TUI surface** for the AD tools (slash command + tab in
   the gmft app).

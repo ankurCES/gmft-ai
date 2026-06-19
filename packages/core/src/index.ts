@@ -65,8 +65,10 @@ export { runOnboarding, type RunOnboardingOpts } from './llm/onboard.js';
 export { appendTurn, readLog, redactSecrets, type Turn } from './session/log.js';
 export {
   redactAdSecrets,
+  auditLogRedactedFields,
   type AdRedactedField,
   type AdRedactionResult,
+  type RedactedToolOutput,
 } from './transcript/redact-ad.js';
 export {
   sessionDir,
@@ -153,5 +155,10 @@ export {
 } from './audit/paths.js';
 export { AuditWriter } from './audit/writer.js';
 export { NOOP_SINK, makeAuditSink, type AuditSink } from './audit/sink.js';
-export { withAuditChokepoint, withAuditSupervisor } from './audit/instrument.js';
+export {
+  withAuditChokepoint,
+  withAuditSupervisor,
+  withAuditToolResult,
+  MAX_TOOL_RESULT_OUTPUT_CHARS,
+} from './audit/instrument.js';
 export { readAuditChainHead, type AuditChainHead } from './audit/head.js';
