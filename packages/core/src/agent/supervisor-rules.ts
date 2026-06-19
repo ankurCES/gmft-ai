@@ -476,5 +476,7 @@ export function resetForNewTurn(state: SupervisorState): SupervisorState {
       familyCallCounts: new Map(),
       chokepointSessionTarget: state.ruleC.chokepointSessionTarget,
     },
+    // v0.4-A.2 — judge runs at most once per turn. See ADR-0015.
+    judgeRanThisTurn: false,
   };
 }

@@ -397,3 +397,138 @@ describe('withSupervisor — postmortem integration (v0.2.A.3)', () => {
     expect(pm?.modelUsed).toBe('agent-model');
   });
 });
+
+// v0.4-A.2 — LLM judge wrapper integration. The unit tests in
+// supervisor-judge.test.ts cover judgePlanQuality in isolation; here
+// we verify the wrapper (a) only invokes the judge on high-blast-
+// radius tools, (b) only invokes it once per turn even when multiple
+// trigger tools appear, and (c) does not invoke it at all when
+// GMFT_SUPERVISOR_JUDGE is unset (default-OFF path must remain zero-
+// cost — no microtask hop, no LLM latency tax).
+describe('withSupervisor — LLM judge integration (v0.4-A.2)', () => {
+  beforeEach(() => {
+    mockedGenerateText.mockReset();
+    // Default OFF for every test in this block. Tests that exercise
+    // the judge explicitly set this to 'true'.
+    delete process.env.GMFT_SUPERVISOR_JUDGE;
+  });
+
+  it('does NOT invoke the judge when GMFT_SUPERVISOR_JUDGE is unset, even with judgeModel provided', async () => {
+    // Two high-blast-radius tool calls in one turn. With the env var
+    // off, the wrapper must short-circuit before judgePlanQuality is
+    // ever called — generateText should not be invoked by the judge
+    // (it WILL be invoked by the postmortem since model is set, so we
+    // assert the prompt content to disambiguate).
+    process.env.GMFT_SUPERVISOR_JUDGE = 'false';
+    mockedGenerateText.mockResolvedValue({
+      text: 'WHAT: x\nLEARNED: y\nMISSING: z\nNEXT: w',
+    } as never);
+    const historyRef = { current: [] as ChatMessage[] };
+    const inner = fakeTurn([
+      { type: 'tool-call-request', id: '1', name: 'sqlmap', args: { url: 'http://t/a' } },
+      { type: 'tool-call-request', id: '2', name: 'nuclei', args: { target: 'http://t' } },
+      { type: 'done', text: '' },
+    ]);
+    const wrapped = withSupervisor({
+      runTurn: () => inner,
+      runTurnOpts: { model: {} as never, system: '', history: [] },
+      historyRef,
+      model: {} as unknown as LanguageModel,
+      judgeModel: {} as unknown as LanguageModel,
+      turnTextRef: { current: 'x' },
+    });
+    const events: AgentEvent[] = [];
+    for await (const ev of wrapped) events.push(ev);
+    // No plan-issue fire should have been emitted.
+    const fires = wrapped.lastFires();
+    expect(fires.find((f) => f.kind === 'plan-issue')).toBeUndefined();
+    // The postmortem WILL have called generateText once. Confirm no
+    // judge-style prompt (mentioning "VERDICT" or "judge") was sent.
+    for (const call of mockedGenerateText.mock.calls) {
+      const promptText = JSON.stringify(call[0]);
+      expect(promptText).not.toMatch(/VERDICT/i);
+      expect(promptText).not.toMatch(/judge/i);
+    }
+  });
+
+  it('invokes the judge at most once per turn, even with multiple high-blast-radius tool calls', async () => {
+    // Three high-blast-radius tool calls in the same turn. The judge
+    // should fire exactly once on the FIRST sqlmap call (state.judgeRanThisTurn
+    // flips after the first call). Subsequent sqlmap/nuclei calls in
+    // the same turn must NOT re-trigger the judge.
+    process.env.GMFT_SUPERVISOR_JUDGE = 'true';
+    // Judge prompts ask "You are auditing an offensive-security
+    // agent's tool-call sequence."; postmortem prompts ask "You are
+    // a multi-agent supervisor writing a brief, factual postmortem."
+    // The discriminator is the judge prompt's distinctive opening —
+    // robust to the postmortem prompt echoing prior judge verdicts
+    // (which contain the substring "VERDICT").
+    mockedGenerateText.mockResolvedValue({
+      text: 'VERDICT: insufficient — no recon precedes sqlmap.\nWHAT: x\nLEARNED: y\nMISSING: z\nNEXT: w',
+    } as never);
+    const historyRef = { current: [] as ChatMessage[] };
+    const inner = fakeTurn([
+      { type: 'tool-call-request', id: '1', name: 'sqlmap', args: { url: 'http://t/a' } },
+      { type: 'tool-call-request', id: '2', name: 'sqlmap', args: { url: 'http://t/b' } },
+      { type: 'tool-call-request', id: '3', name: 'nuclei', args: { target: 'http://t' } },
+      { type: 'done', text: '' },
+    ]);
+    const wrapped = withSupervisor({
+      runTurn: () => inner,
+      runTurnOpts: { model: {} as never, system: '', history: [] },
+      historyRef,
+      model: {} as unknown as LanguageModel,
+      judgeModel: {} as unknown as LanguageModel,
+      turnTextRef: { current: 'x' },
+    });
+    const events: AgentEvent[] = [];
+    for await (const ev of wrapped) events.push(ev);
+    // Count judge-prompted generateText calls via the judge's
+    // distinctive opening line. There should be exactly ONE judge
+    // call across the entire turn.
+    const judgeCalls = mockedGenerateText.mock.calls.filter((call) => {
+      const promptText = JSON.stringify(call[0]);
+      return /You are auditing an offensive-security agent/i.test(promptText);
+    });
+    expect(judgeCalls).toHaveLength(1);
+    // Total generateText calls should be exactly 2: 1 judge + 1
+    // postmortem. (If the judge fired twice we'd see 3+ calls.)
+    expect(mockedGenerateText).toHaveBeenCalledTimes(2);
+    // Exactly one plan-issue fire should have been emitted.
+    const fires = wrapped.lastFires();
+    const planIssueFires = fires.filter((f) => f.kind === 'plan-issue');
+    expect(planIssueFires).toHaveLength(1);
+  });
+
+  it('does NOT invoke the judge for low-blast-radius tools (e.g. whois, nmap)', async () => {
+    // Sanity check that the HIGH_BLAST_RADIUS_TOOLS gate actually
+    // narrows the trigger. A turn with ONLY whois/nmap calls should
+    // never call the judge, even with GMFT_SUPERVISOR_JUDGE=true.
+    process.env.GMFT_SUPERVISOR_JUDGE = 'true';
+    mockedGenerateText.mockResolvedValue({
+      text: 'WHAT: x\nLEARNED: y\nMISSING: z\nNEXT: w',
+    } as never);
+    const inner = fakeTurn([
+      { type: 'tool-call-request', id: '1', name: 'whois', args: { domain: 'example.com' } },
+      { type: 'tool-call-request', id: '2', name: 'nmap_scan', args: { target: 'h', ports: '80' } },
+      { type: 'done', text: '' },
+    ]);
+    const wrapped = withSupervisor({
+      runTurn: () => inner,
+      runTurnOpts: { model: {} as never, system: '', history: [] },
+      historyRef: { current: [] },
+      model: {} as unknown as LanguageModel,
+      judgeModel: {} as unknown as LanguageModel,
+      turnTextRef: { current: 'x' },
+    });
+    for await (const _ev of wrapped) { /* drain */ }
+    // No judge-prompted generateText call should have occurred.
+    const judgeCalls = mockedGenerateText.mock.calls.filter((call) => {
+      const promptText = JSON.stringify(call[0]);
+      return /VERDICT/i.test(promptText);
+    });
+    expect(judgeCalls).toHaveLength(0);
+    // No plan-issue fire.
+    expect(wrapped.lastFires().find((f) => f.kind === 'plan-issue')).toBeUndefined();
+  });
+});

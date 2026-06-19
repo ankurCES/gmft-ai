@@ -69,11 +69,49 @@ import {
   createInitialState,
   type SupervisorState,
   type SupervisorFire,
+  type PlanIssueFire,
   type SupervisorFireRecord,
   type SupervisorTurnRecord,
 } from './supervisor-types.js';
 import { generatePostmortem } from './supervisor-postmortem.js';
+import { judgePlanQuality, type JudgeInput } from './supervisor-judge.js';
 import type { ChatMessage } from './context.js';
+
+// v0.4-A.2 — high-blast-radius tools (see ADR-0015). The judge runs
+// ONLY on these tools, gated by GMFT_SUPERVISOR_JUDGE=true and the
+// presence of opts.judgeModel. Set contents are reconciled from the
+// doubt-driven review — the actual tool names in the registry are
+// 'sqlmap' (packages/tools/src/web/sqlmap.ts:34) and 'nuclei'
+// (packages/tools/src/web/nuclei.ts:50).
+const HIGH_BLAST_RADIUS_TOOLS = new Set(['sqlmap', 'nuclei']);
+
+/**
+ * v0.4-A.2 — per-tool trigger-target accessor. Sqlmap uses `args.url`,
+ * nuclei uses `args.target`. Future high-blast-radius tools should
+ * follow one of these conventions; this fallback chain handles both,
+ * plus `args.host` for tools that use it. Empty string is a safe
+ * fallback — the prompt will render `tool` against `` `` which the LLM
+ * can reason about as "no target context provided".
+ */
+function extractTriggerTarget(
+  _name: string,
+  args: Record<string, unknown>,
+): string {
+  const a = args as Record<string, unknown>;
+  if (typeof a.url === 'string') return a.url;
+  if (typeof a.target === 'string') return a.target;
+  if (typeof a.host === 'string') return a.host;
+  return '';
+}
+
+/**
+ * v0.4-A.2 — env-var gate. Default OFF; operator opts in by setting
+ * `GMFT_SUPERVISOR_JUDGE=true`. Strict equality to 'true' (the env
+ * var is a string by definition). See ADR-0015 §Env-var gate placement.
+ */
+function judgeEnabled(): boolean {
+  return process.env.GMFT_SUPERVISOR_JUDGE === 'true';
+}
 
 export interface HistoryRef {
   current: ChatMessage[];
@@ -112,6 +150,13 @@ export interface WithSupervisorOpts {
   turnTextRef?: { current: string };
   /** Called with the resulting `SupervisorTurnRecord` after `done`. */
   onPostmortem?: (record: SupervisorTurnRecord) => void;
+  /**
+   * v0.4-A.2 — LLM model for the plan-quality judge. Optional; when
+   * undefined, the judge never fires even if `GMFT_SUPERVISOR_JUDGE=true`.
+   * AgentApp does NOT wire a model in v0.4-A.2 — that lands in v0.4-A.4
+   * (CLI surface). See ADR-0015 §Wrapper integration.
+   */
+  judgeModel?: LanguageModel;
 }
 
 export interface SupervisorWrapper extends AsyncIterable<AgentEvent> {
@@ -166,6 +211,57 @@ export function withSupervisor(opts: WithSupervisorOpts): SupervisorWrapper {
           { role: 'user', content: `Supervisor: ${fire.advice}` },
         ];
         yield { type: 'supervisor-fire', fire, targetEventId: fire.targetEventId };
+      }
+
+      // v0.4-A.2 — LLM judge for plan quality. See ADR-0015.
+      // Runs BEFORE `yield event` so the judge's fire (if any) is yielded
+      // in the SAME chunk as the rule-engine fires — the TUI pairs fires
+      // with their triggering event for the inline ⚠ marker.
+      //
+      // Gating: runs at most once per turn (state.judgeRanThisTurn), only
+      // on high-blast-radius tools (sqlmap, nuclei), only when the
+      // operator has opted in via GMFT_SUPERVISOR_JUDGE=true, only when
+      // a judgeModel was provided. Default-OFF path never enters this
+      // block (no microtask hop, no LLM latency tax).
+      if (
+        event.type === 'tool-call-request' &&
+        HIGH_BLAST_RADIUS_TOOLS.has(event.name) &&
+        judgeEnabled() &&
+        opts.judgeModel !== undefined &&
+        state.judgeRanThisTurn !== true
+      ) {
+        state.judgeRanThisTurn = true;
+        const reconCount = state.ruleC.reconCallsThisTurn;
+        const findingsSummary =
+          reconCount > 0
+            ? `${reconCount} recon-class tool call(s) earlier this turn (whois/dig/nmap_*/etc.)`
+            : 'No recon-class tools called this turn';
+        const input: JudgeInput = {
+          recentToolCalls: state.ruleA.recent.map((r) => ({ name: r.name })),
+          findingsSummary,
+          triggerTool: event.name,
+          triggerTarget: extractTriggerTarget(event.name, event.args),
+        };
+        const result = await judgePlanQuality(input, opts.judgeModel);
+        if (result.verdict === 'insufficient') {
+          const fire: PlanIssueFire = {
+            kind: 'plan-issue',
+            severity: 'warn',
+            text: `LLM judge: insufficient pre-attack recon for ${event.name}`,
+            advice: `Supervisor (LLM judge): \`${event.name}\` invoked without sufficient pre-attack recon per the LLM judge. Reason: ${result.reason}`,
+            targetEventId: event.id,
+          };
+          state = applyFire(state, fire);
+          opts.historyRef.current = [
+            ...opts.historyRef.current,
+            { role: 'user', content: `Supervisor: ${fire.advice}` },
+          ];
+          yield {
+            type: 'supervisor-fire',
+            fire,
+            targetEventId: fire.targetEventId,
+          };
+        }
       }
 
       // Always yield the original event unchanged.

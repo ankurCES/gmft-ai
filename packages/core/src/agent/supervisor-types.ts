@@ -107,6 +107,13 @@ export type SupervisorState = {
     familyCallCounts: Map<string, number>;
     chokepointSessionTarget?: string;
   };
+
+  // v0.4-A.2 — LLM judge for plan quality.
+  // Optional so existing createInitialState() call sites compile
+  // without change. When undefined, treated as false. resetForNewTurn
+  // sets it to false explicitly so per-turn resets are obvious to
+  // future maintainers. See ADR-0015.
+  judgeRanThisTurn?: boolean;
 };
 
 export function createInitialState(chokepointSessionTarget?: string): SupervisorState {
