@@ -29,6 +29,7 @@ import type { Message as Msg } from '../ui/components/Message.js';
 import type { SessionInfo, SessionStore } from './store.js';
 import { formatToolList, findTool } from './tool-picker.js';
 import { parseRunCommand } from './run-command.js';
+import type { SupervisorFire, SupervisorTurnRecord } from '@gmft/core';
 
 export type ReportFormat = 'md' | 'json' | 'pdf';
 
@@ -140,6 +141,34 @@ export interface SlashContext {
     tool: string,
     args: readonly string[],
   ) => Promise<{ msg: Msg; denied: boolean }>;
+  /**
+   * v0.4-A.4 — read the last completed turn's supervisor snapshot.
+   * Wired in by `AgentApp` so the `/supervisor [fires|postmortem]`
+   * slash command can render the supervisor's fires + postmortem
+   * without re-running the rule engine. The callback returns:
+   *   - `null` if no turn has completed yet (e.g. user typed
+   *     `/supervisor` before the LLM has submitted anything), OR
+   *     if the supervisor was never wired for this session.
+   *   - a snapshot otherwise (fires may be empty for a quiet turn;
+   *     postmortem is undefined if the postmortem wasn't generated,
+   *     e.g. when no model was supplied to `withSupervisor`).
+   *
+   * If absent, `/supervisor` returns a friendly "supervisor not wired"
+   * reply.
+   */
+  getSupervisorSnapshot?: () => SupervisorSnapshot | null;
+}
+
+/**
+ * v0.4-A.4 — the supervisor's state for the most recently completed
+ * turn. `fires` is whatever `withSupervisor.lastFires()` returned
+ * (may be empty for a quiet turn). `postmortem` is whatever
+ * `withSupervisor.lastPostmortem()` returned (undefined when no
+ * model was supplied, or when the turn produced no prose).
+ */
+export interface SupervisorSnapshot {
+  fires: readonly SupervisorFire[];
+  postmortem?: SupervisorTurnRecord;
 }
 
 export type AuditSubcommand = 'verify' | 'log' | 'tail';
@@ -180,6 +209,8 @@ export const HELP_TEXT =
   '  /audit verify               walk the audit chain, report integrity\n' +
   '  /audit log [n]              show recent audit events (default 50)\n' +
   '  /audit tail                 follow the audit log (500ms poll)\n' +
+  '  /supervisor [fires|postmortem]\n' +
+  '                             show last turn\'s fires + postmortem\n' +
   '  /exit                       exit (alias for Ctrl-C)';
 
 /**
@@ -303,6 +334,15 @@ export async function dispatchSlash(
 
   if (cmd === '/audit') {
     return await handleAudit(arg, rest, ctx, reply);
+  }
+
+  // v0.4-A.4 — supervisor state for the last turn. Mirrors the
+  // structure of `/audit`: pure dispatcher, callback in ctx for
+  // I/O. Subcommands: none (default = show both fires + postmortem),
+  // `fires` (just the rule-violation list), `postmortem` (just the
+  // prose summary).
+  if (cmd === '/supervisor') {
+    return await handleSupervisor(arg, ctx, reply);
   }
 
   // Unknown command — never forward.
@@ -701,5 +741,171 @@ async function handleRun(
     kind: 'handled',
     reply: reply(`Ran ${parsed.tool}.`, 'run'),
     toolResult: msg,
+  };
+}
+
+/**
+ * v0.4-A.4 — format a {@link SupervisorSnapshot} for the chat reply.
+ *
+ * Pure formatter — no I/O, no side effects, no React. The output is
+ * a multi-line string suitable for the chat pane's `Msg.content`.
+ *
+ * Layout rules (in priority order):
+ *   1. If `postmortem` is present, the postmortem section ALWAYS
+ *      renders (header + model provenance + indented body). The
+ *      fires section renders only if `fires.length > 0`.
+ *   2. If `postmortem` is absent and `fires.length > 0`, render the
+ *      "Last turn: N fire(s)" header + the Fires list.
+ *   3. If `postmortem` is absent and `fires.length === 0`, render
+ *      "Last turn: quiet (no fires)".
+ *
+ * This lets the postmortem-only subcommand (`/supervisor postmortem`)
+ * render just the prose even when fires are present (the dispatcher
+ * passes `fires: []` to suppress the fires header in that case).
+ *
+ * Exported so tests can assert on the exact rendered string without
+ * dispatching the slash command.
+ */
+export function formatSupervisorSnapshot(snapshot: SupervisorSnapshot): string {
+  const { fires, postmortem } = snapshot;
+  const lines: string[] = [];
+
+  if (fires.length > 0) {
+    lines.push(`Last turn: ${fires.length} fire(s)`);
+    lines.push('Fires:');
+    for (let i = 0; i < fires.length; i++) {
+      const f = fires[i]!;
+      // PlanIssueFire is the only variant that carries severity + text.
+      // For other variants we still surface the kind + advice so the
+      // operator can see what fired.
+      const severity =
+        'severity' in f && typeof f.severity === 'string' ? f.severity : '-';
+      const text =
+        'text' in f && typeof f.text === 'string' ? f.text : '(see advice)';
+      lines.push(
+        `  ${i + 1}. [${f.kind}] ${text}` +
+          `    (severity: ${severity}, target: ${f.targetEventId})`,
+      );
+      lines.push(`     advice: ${f.advice}`);
+    }
+  } else if (postmortem === undefined) {
+    lines.push('Last turn: quiet (no fires)');
+  }
+
+  if (postmortem !== undefined) {
+    const modelLine =
+      postmortem.modelUsed !== undefined && postmortem.modelUsed !== ''
+        ? ` (model: ${postmortem.modelUsed})`
+        : '';
+    // The schema uses `postmortem` for the prose body and a separate
+    // `postmortemError` for failure cases. If `postmortemError` is
+    // set, surface it as the postmortem section so the operator can
+    // see why the prose didn't generate (e.g. timeout, model 503).
+    const body =
+      typeof postmortem.postmortem === 'string' && postmortem.postmortem !== ''
+        ? postmortem.postmortem
+        : typeof postmortem.postmortemError === 'string' &&
+            postmortem.postmortemError !== ''
+          ? `(postmortem generation failed: ${postmortem.postmortemError})`
+          : '(no postmortem text)';
+    lines.push(`Postmortem${modelLine}:`);
+    // Indent the prose so it visually separates from the header.
+    const indentedBody = body
+      .split('\n')
+      .map((l: string) => `  ${l}`)
+      .join('\n');
+    lines.push(indentedBody);
+  }
+
+  return lines.join('\n');
+}
+
+export type SupervisorSubcommand = 'fires' | 'postmortem';
+
+/**
+ * `/supervisor [fires|postmortem]` — show the last turn's supervisor
+ * state (fires + postmortem). Mirrors the structure of `/audit`:
+ * pure dispatcher, callback in ctx for I/O. Default subcommand
+ * renders both sections.
+ *
+ * Subcommands:
+ *   - (none)       — show fires + postmortem
+ *   - `fires`      — show only the rule-violation list
+ *   - `postmortem` — show only the prose summary
+ *
+ * The slash command stays pure — `AgentApp.getSupervisorSnapshot`
+ * reads from the `withSupervisor` wrapper's `lastFires()` /
+ * `lastPostmortem()` accessors.
+ */
+async function handleSupervisor(
+  arg: string | undefined,
+  ctx: SlashContext,
+  reply: (content: string, idSuffix: string) => Msg,
+): Promise<SlashResult> {
+  if (!ctx.getSupervisorSnapshot) {
+    return {
+      kind: 'handled',
+      reply: reply(
+        'Supervisor is not wired into this build of gmft.',
+        'supervisor-noop',
+      ),
+    };
+  }
+
+  const snapshot = ctx.getSupervisorSnapshot();
+  if (snapshot === null) {
+    return {
+      kind: 'handled',
+      reply: reply(
+        'No turn has completed yet. Run a turn first, then /supervisor will show its fires + postmortem.',
+        'supervisor-empty',
+      ),
+    };
+  }
+
+  // Parse the optional subcommand. Unknown values fall back to the
+  // default (both fires + postmortem) so the operator can recover
+  // from typos without leaving the TUI.
+  const sub = arg?.toLowerCase();
+  if (sub !== undefined && sub !== 'fires' && sub !== 'postmortem') {
+    return {
+      kind: 'handled',
+      reply: reply(
+        `Unknown supervisor subcommand: ${sub}\nUsage: /supervisor [fires|postmortem]`,
+        'supervisor-usage',
+      ),
+    };
+  }
+
+  const subcommand: SupervisorSubcommand | undefined =
+    sub === 'fires' || sub === 'postmortem' ? sub : undefined;
+
+  // Build a view-shaped snapshot so the formatter can render only
+  // the requested section. For the fires-only subcommand we pass the
+  // real fires array; for the postmortem-only subcommand we pass
+  // `fires: []` so the formatter suppresses the fires header (the
+  // `Last turn: N fire(s)` line) and renders only the postmortem
+  // section. For the default (both) we pass the snapshot verbatim.
+  let view: SupervisorSnapshot;
+  let idSuffix: string;
+  if (subcommand === 'fires') {
+    view = { fires: snapshot.fires };
+    idSuffix = 'supervisor-fires';
+  } else if (subcommand === 'postmortem') {
+    view = {
+      fires: [],
+      ...(snapshot.postmortem !== undefined
+        ? { postmortem: snapshot.postmortem }
+        : {}),
+    };
+    idSuffix = 'supervisor-postmortem';
+  } else {
+    view = snapshot;
+    idSuffix = 'supervisor';
+  }
+
+  return {
+    kind: 'handled',
+    reply: reply(formatSupervisorSnapshot(view), idSuffix),
   };
 }
