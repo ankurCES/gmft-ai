@@ -4,6 +4,74 @@ All notable changes to GMFT-AI are documented here.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning: [Semantic](https://semver.org/).
 
+## [0.4.0-A.1] — 2026-06-19
+
+**v0.4.0-A.1 — Supervisor Rule E (risk-escalation).** First slice
+of [the v0.4 plan](docs/plans/2026-06-18-gmft-ai-v0.4.md). Adds
+the supervisor's Rule E, a new fire shape `risk-escalation` in
+the `SupervisorFire` discriminated union, and the Zod schema
+variant for the audit-log wire format. **863 tests green**
+(1 testkit + 237 core + 352 tools + 273 gmft). No breaking API
+changes; chokepoint semantics unchanged.
+
+### Added
+- **Rule E (risk-escalation).** Fires when a destructive tool
+  is the **first** tool of the turn. This is a stricter gate than
+  Rule C.1, which deliberately skips the first tool of the turn
+  (see `supervisor-rules.ts:339`). The two rules are disjoint:
+  - First tool of turn is destructive → C.1 silent, E fires
+  - Non-recon/non-destructive tool came first, then a destructive
+    tool → C.1 fires, E silent
+  Wired into the supervisor wrapper as `A → E → C → B`. Rule E
+  MUST run before Rule C, or its pre-call-counter gate reads the
+  post-increment value and over-fires on 2nd+ destructive calls
+  (test #2 in `supervisor-rules-rule-e.test.ts` pins this).
+- **`RiskEscalationFire` type.** New `kind: 'risk-escalation'`
+  variant on the `SupervisorFire` discriminated union, with
+  fields `tool`, `firstToolOfTurn: true`, `advice`, `targetEventId`.
+  The literal `firstToolOfTurn: true` flag is self-documenting in
+  the audit-log wire format.
+- **`SupervisorFireRecordSchema` Zod variant.** Audit-log readers
+  accept the new shape; v0.3-C and earlier log files parse
+  unchanged (they simply don't contain `risk-escalation` fires).
+
+### Changed
+- **`packages/core/src/agent/supervisor.ts` wrapper sequence.**
+  Was `A → B → C`. Now `A → E → C → B`. Rule B's position is
+  timing-irrelevant for tool-call-request events (B fires on
+  text-delta); placing it last preserves existing test expectations
+  and keeps the diff small.
+- **Fire list.** Was `[rA.fire, rB.fire, rC.fire].filter(Boolean)`.
+  Now `[rA.fire, rE.fire, rC.fire, rB.fire].filter(Boolean)`.
+- **`apps/gmft/src/AgentApp.tsx` comment.** Lines 708-713
+  previously claimed `chokepointSessionTarget: undefined` was
+  safe because "Rule C.3 only consults this for the
+  `targetRequired` flag, which no current tool uses." That was
+  true but misleading. The corrected comment names the
+  v0.4-A.x follow-up: wire the resolved `--target` value once
+  a non-destructive `targetRequired` tool exists in the registry.
+
+### Documented
+- **[ADR-0014](docs/plans/adr/0014-v0.4-a-supervisor-completion.md).**
+  The design record. Records the doubt-driven-development review
+  of the original v0.4-A.1 proposal (14 findings, 6 concrete
+  defects) and the reconciled design: Trigger 3 (overreach)
+  deleted from v0.4-A scope because overreach is the chokepoint's
+  job (its `checkTarget` rule already enforces target scope for
+  destructive calls), and Trigger 5 (risk-escalation) reframed
+  as Rule E. Read ADR-0014 §Decision for the full rationale.
+
+### Migration notes
+- No user-visible breaking changes from v0.3.0.
+- The supervisor now produces a new fire shape (`risk-escalation`).
+  Existing transcript readers, audit-log readers, and TUI rendering
+  ignore the new shape gracefully — the audit-log schema parser
+  accepts it, the TUI renders it as the generic ⚠ marker until a
+  v0.4-A.4 follow-up adds a kind-specific icon.
+- `chokepointSessionTarget` is still passed as `undefined` from
+  `AgentApp` (no `targetRequired` tools in the registry). See
+  ADR-0014 §Open follow-ups for the v0.4-A.x plan.
+
 ## [0.3.0] — 2026-06-19
 
 **v0.3.0 — Run polish + recon + audit.** Aggregates the
